@@ -3,42 +3,38 @@ import contextlib
 import os
 import time
 from contextlib import asynccontextmanager
+from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from lse import LSE
 
 load_dotenv()
-API_KEY = os.environ["LSE_API_KEY"]
-SYMBOL = "MANU"
-assert API_KEY, "LSE_API_KEY is not set"
+API_KEY: str = os.environ["LSE_API_KEY"] # raises error if missing
+SYMBOL: str = "MANU"
 
 # Latest tick kept in memory only (no persistence).
-last: dict | None = None
-connected = False
+last: dict[str, Any] | None = None
+connected: bool = False
 
 
 async def stream():
     """Pull live LSE ticks into `last`; reconnect after transient errors."""
     global last, connected
-    while True:
-        try:
+    try:
+        async for t in LSE(api_key=API_KEY).stream_async([SYMBOL], reconnect=True):
             connected = True
-            async for t in LSE(api_key=API_KEY).stream_async([SYMBOL], reconnect=True):
-                last = {
-                    "symbol": getattr(t, "symbol", SYMBOL),
-                    "price": float(t.price),
-                    "bid": t.bid,
-                    "ask": t.ask,
-                    "volume": getattr(t, "volume", None),
-                    "received_at": time.time(),
-                }
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            connected = False
-            await asyncio.sleep(1)
-
+            last = {
+                "symbol": getattr(t, "symbol", SYMBOL),
+                "price": float(t.price),
+                "bid": t.bid,
+                "ask": t.ask,
+                "volume": getattr(t, "volume", None),
+                "received_at": time.time(),
+            }
+    finally:
+        # reconnect happens inside the async loop
+        connected = False
 
 @asynccontextmanager
 async def lifespan(_app):
@@ -64,3 +60,8 @@ def tick():
     if not last:
         raise HTTPException(503, "no tick yet")
     return {**last, "age_ms": int((time.time() - last["received_at"]) * 1000)}
+
+# local run
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
