@@ -70,14 +70,13 @@ async def label_dataset():
     async def label_one(i):
         async with semaphore:
             body = records[i]["body"]
-            return i, await label_document(client, body)
+            records[i]["llm"] = await label_document(client, body)
 
     tasks = [asyncio.create_task(label_one(i)) for i in pending]
     completed = 0
     try:
         for future in asyncio.as_completed(tasks):
-            i, result = await future
-            records[i]["llm"] = result
+            await future
             completed += 1
             if completed % CHECKPOINT_EVERY == 0 or completed == len(pending):
                 await asyncio.to_thread(save, records)
