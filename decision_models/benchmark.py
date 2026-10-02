@@ -1,7 +1,6 @@
-"""Compare Laya's 8-K triage labels with the dataset's current annotations."""
+"""Benchmark Laya on the fixed 50-filing sample."""
 
 import argparse
-import hashlib
 import json
 import os
 import time
@@ -13,10 +12,11 @@ os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 import laya
 import torch
 
+from benchmark_common import HERE, LABELS, body_hash, load_sample, percentile, reference, save, scores
+
 
 MODEL = "convaiinnovations/laya"
 MODEL_REVISION = "55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851"
-LABELS = ("routine", "review_worthy", "unclear")
 QUESTIONS = {
     "triage": {
         "type": "choice",
@@ -30,102 +30,65 @@ QUESTIONS = {
 }
 
 
-def save(path, result):
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
-    temporary.replace(path)
-
-
-def scores(rows):
-    matrix = {label: {pred: 0 for pred in LABELS} for label in LABELS}
-    for row in rows:
-        matrix[row["reference"]][row["prediction"]] += 1
-
-    per_label = {}
-    for label in LABELS:
-        tp = matrix[label][label]
-        predicted = sum(matrix[actual][label] for actual in LABELS)
-        support = sum(matrix[label].values())
-        precision = tp / predicted if predicted else 0
-        recall = tp / support if support else 0
-        per_label[label] = {
-            "precision": precision,
-            "recall": recall,
-            "f1": 2 * precision * recall / (precision + recall) if precision + recall else 0,
-            "support": support,
-        }
-    return {
-        "agreement": sum(matrix[label][label] for label in LABELS) / len(rows),
-        "macro_f1": sum(item["f1"] for item in per_label.values()) / len(LABELS),
-        "label_distribution": {label: sum(row["prediction"] == label for row in rows) for label in LABELS},
-        "per_label": per_label,
-        "confusion_matrix": matrix,
-    }
-
-
-def benchmark(dataset, output, device):
-    records = json.loads(dataset.read_text(encoding="utf-8"))
-    references = [record["human"]["label"] or record["llm"]["label"] for record in records]
-    if any(label not in LABELS for label in references):
-        raise ValueError("Every record needs a human or LLM label before benchmarking")
-
+def benchmark(device, output):
+    _, sample, _ = load_sample()
     warnings.filterwarnings("ignore", message=r"laya:.*invalid temperatures")
+    load_started = time.perf_counter()
     agent = laya.load(MODEL, device=device, revision=MODEL_REVISION)
+    load_seconds = time.perf_counter() - load_started
+
     rows = []
     started = time.perf_counter()
-    for index, (record, reference) in enumerate(zip(records, references), 1):
+    for index, record in enumerate(sample, 1):
+        if device == "cuda":
+            torch.cuda.synchronize()
+        before = time.perf_counter()
         result = agent.predict_long(record["body"], QUESTIONS)["answers"]["triage"]
+        if device == "cuda":
+            torch.cuda.synchronize()
         prediction = result["choice"]
         if prediction not in LABELS:
-            raise ValueError(f"Unexpected Laya label at record {index}: {prediction}")
+            raise ValueError(f"Unexpected Laya label: {prediction}")
         rows.append({
             "date": record["date"],
-            "body_sha256": hashlib.sha256(record["body"].encode()).hexdigest(),
-            "reference": reference,
+            "body_sha256": body_hash(record),
+            "reference": reference(record),
             "reference_source": "human" if record["human"]["label"] is not None else "llm",
             "prediction": prediction,
+            "latency_seconds": time.perf_counter() - before,
             "probabilities": result["probabilities"],
             "confidence": result["confidence"],
             "answer_confidence": result["answer_confidence"],
             "windows": result.get("window", {}).get("count", 1),
         })
-        if index % 25 == 0 or index == len(records):
-            summary = scores(rows)
-            save(output, {
-                "model": MODEL,
-                "model_revision": MODEL_REVISION,
-                "device": str(agent.device),
-                "comparison": "Agreement with human labels when present, otherwise current LLM labels; not ground-truth accuracy.",
-                "confidence_note": "The checkpoint warned that some confidence values are uncalibrated.",
-                "examples_completed": index,
-                "examples_total": len(records),
-                "elapsed_seconds": round(time.perf_counter() - started, 1),
-                "scores_so_far": summary,
-                "predictions": rows,
-            })
-            print(f"{index}/{len(records)} | agreement {summary['agreement']:.3f} | macro F1 {summary['macro_f1']:.3f}", flush=True)
+        if index % 10 == 0 or index == len(sample):
+            save(output, {"model": MODEL, "device": device, "completed": index, "total": len(sample), "predictions": rows})
+            print(f"Laya {device}: {index}/{len(sample)}", flush=True)
 
-    final = scores(rows)
-    save(output, {
+    elapsed = time.perf_counter() - started
+    latencies = [row["latency_seconds"] for row in rows]
+    result = {
         "model": MODEL,
         "model_revision": MODEL_REVISION,
-        "device": str(agent.device),
+        "device": device,
         "comparison": "Agreement with human labels when present, otherwise current LLM labels; not ground-truth accuracy.",
-        "confidence_note": "The checkpoint warned that some confidence values are uncalibrated.",
-        "examples_completed": len(records),
-        "examples_total": len(records),
-        "elapsed_seconds": round(time.perf_counter() - started, 1),
-        "scores": final,
+        "confidence_note": "The checkpoint warns that some confidence values are uncalibrated.",
+        "model_load_seconds": load_seconds,
+        "elapsed_seconds": elapsed,
+        "latency_seconds": {"mean": sum(latencies) / len(latencies), "p50": percentile(latencies, 0.50), "p95": percentile(latencies, 0.95)},
+        "estimated_cost_usd": 0,
+        "scores": scores(rows),
         "predictions": rows,
-    })
-    print(json.dumps(final, indent=2))
-    print(f"Saved {len(rows)} predictions to {output}")
+    }
+    save(output, result)
+    print(json.dumps({key: value for key, value in result.items() if key != "predictions"}, indent=2))
+    print(f"Saved predictions to {output}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--device", choices=("cpu", "cuda"), default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--dataset", type=Path, default=Path(__file__).with_name("dataset.json"))
-    parser.add_argument("--output", type=Path, default=Path(__file__).with_name("laya_benchmark.json"))
+    parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    benchmark(args.dataset, args.output, args.device)
+    output = args.output or HERE / "benchmark_results" / f"laya-{args.device}.json"
+    benchmark(args.device, output)
