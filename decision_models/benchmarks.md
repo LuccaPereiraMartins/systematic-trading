@@ -21,16 +21,17 @@ Install the benchmark dependencies into global Python (versions used for this ru
 uv pip install --system laya==0.3.21 openai==3.22.1 python-dotenv==1.2.2 pydantic==2.13.5 scikit-learn==1.9.1
 ```
 
-Run each approach separately from the repository root:
+Run all four approaches from the repository root:
 
 ```powershell
-python decision_models/benchmark_laya.py --device cuda
-python decision_models/benchmark_luna.py
-python decision_models/benchmark_sol.py
-python decision_models/benchmark_tfidf.py
+python decision_models/benchmark.py
+# Or select approaches and an explicit Laya device:
+python decision_models/benchmark.py --models laya tfidf --device cuda
 ```
 
-The OpenAI scripts use `OPENAI_API_KEY` from the repository `.env`. All prediction JSON is written under the ignored `decision_models/benchmark_results/` folder; the fixed sample manifest and this summary are committed.
+`benchmark.py` contains one `Benchmark` class. Its `run()` method runs the selected approaches, sharing the sample, reference labels, scoring, timing and checkpoint saving. Model names, pricing, reasoning effort and concurrency are class attributes; each approach has its own inference method. OpenAI models run sequentially, each with four concurrent Flex requests, using `OPENAI_API_KEY` from the repository `.env`.
+
+Every successful prediction is saved under the ignored `decision_models/benchmark_results/` folder. Running again replaces that approach's local results. The fixed sample manifest and this summary are committed. The numbers above are from the original pilot; inference was not rerun for the refactor.
 
 ## Earlier Laya run
 
