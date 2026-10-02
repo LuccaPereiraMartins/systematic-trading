@@ -15,10 +15,10 @@ OpenAI costs are estimates from returned token usage and the short-context Flex 
 
 ## Run
 
-Install the classifier dependency into global Python:
+Install the benchmark dependencies into global Python (versions used for this run):
 
 ```powershell
-uv pip install --system scikit-learn
+uv pip install --system laya==0.3.21 openai==3.22.1 python-dotenv==1.2.2 pydantic==2.13.5 scikit-learn==1.9.1
 ```
 
 Run each approach separately from the repository root:
