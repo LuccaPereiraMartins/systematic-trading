@@ -76,7 +76,7 @@ def benchmark(device, output):
         "model_load_seconds": load_seconds,
         "elapsed_seconds": elapsed,
         "latency_seconds": {"mean": sum(latencies) / len(latencies), "p50": percentile(latencies, 0.50), "p95": percentile(latencies, 0.95)},
-        "estimated_cost_usd": 0,
+        "estimated_cost_per_run_usd": 0,
         "scores": scores(rows),
         "predictions": rows,
     }

@@ -4,12 +4,12 @@ The pilot uses a fixed, class-stratified sample of 50 from `dataset.json` (13 ro
 
 All 500 records currently use GPT-6 Luna labels. Scores below are **agreement with provisional references**, not human accuracy; GPT-6 Luna's score is a self-consistency check. Only three pilot examples are `unclear`, so that class's metrics are especially noisy.
 
-| Approach | Agreement | Macro F1 | Inference p50 / p95 | Run time | Estimated cost |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Laya on CUDA | 66% | 0.376 | 230 / 542 ms | 21.5s including 8.2s model load | $0 |
-| GPT-6 Luna, Flex, low | 90% | 0.812 | 1.43 / 3.25s | 21.5s | $0.0056 |
-| GPT-6.1 Sol, Flex, low | 94% | 0.794 | 3.36 / 4.98s | 45.8s | $0.1052 |
-| TF-IDF + logistic regression | 76% | 0.589 | 1.25 / 2.40ms | 0.72s including 0.65s fit | $0 |
+| Approach | Agreement | Macro F1 | Inference p50 / p95 | Estimated cost per 50-filing run |
+| --- | ---: | ---: | ---: | ---: |
+| Laya on CUDA | 66% | 0.376 | 230 / 542 ms | $0 |
+| GPT-6 Luna, Flex, low | 90% | 0.812 | 1.43 / 3.25s | $0.0056 |
+| GPT-6.1 Sol, Flex, low | 94% | 0.794 | 3.36 / 4.98s | $0.1052 |
+| TF-IDF + logistic regression | 76% | 0.589 | 1.25 / 2.40ms | $0 |
 
 OpenAI costs are estimates from returned token usage and the short-context Flex rates at run time; check account billing for the actual charge. The estimate uses rates in [OpenAI API pricing](https://developers.openai.com/api/docs/pricing?tab=suite). The tiny sample is a pipeline smoke benchmark, not enough to rank models confidently.
 

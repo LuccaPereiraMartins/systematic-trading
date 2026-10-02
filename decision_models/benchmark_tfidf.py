@@ -42,7 +42,7 @@ result = {
     "fit_seconds": fit_seconds,
     "elapsed_seconds": time.perf_counter() - started,
     "latency_seconds": {"mean": sum(latencies) / len(latencies), "p50": percentile(latencies, 0.50), "p95": percentile(latencies, 0.95)},
-    "estimated_cost_usd": 0,
+    "estimated_cost_per_run_usd": 0,
     "scores": scores(rows),
     "predictions": rows,
 }
