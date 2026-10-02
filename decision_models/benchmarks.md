@@ -24,7 +24,7 @@ uv pip install --system laya==0.3.21 openai==3.22.1 python-dotenv==1.2.2 pydanti
 Run each approach separately from the repository root:
 
 ```powershell
-python decision_models/benchmark.py --device cuda
+python decision_models/benchmark_laya.py --device cuda
 python decision_models/benchmark_luna.py
 python decision_models/benchmark_sol.py
 python decision_models/benchmark_tfidf.py
