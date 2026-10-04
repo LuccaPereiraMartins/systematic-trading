@@ -1,14 +1,15 @@
-"compare laya on cpu and gpu"
+"""compare laya on cpu and gpu"""
 
-import os
 import gc
-import laya
+import os
 import pprint
 import time
-import torch
 import warnings
 
-os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1" # suppress loading bars
+import laya
+import torch
+
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"  # suppress loading bars
 warnings.filterwarnings("ignore", message="laya:*")
 
 
@@ -27,10 +28,11 @@ QUESTIONS = {
             "potentially_material": "Potentially significant event that merits review.",
             "unclear": "Not enough information to classify confidently.",
         },
-    }
+    },
 }
 
 # NOTE: sync kernel often for accurate timing
+
 
 def run(device, repeats=3):
     start = time.perf_counter()
@@ -39,7 +41,7 @@ def run(device, repeats=3):
 
     agent.predict(TEXT, QUESTIONS)  # warm-up run, doesn't count towards timing
     if device == "cuda":
-        torch.cuda.synchronize() # wait for gpu to finish prediction
+        torch.cuda.synchronize()  # wait for gpu to finish prediction
 
     timings = []
     for _ in range(repeats):
@@ -63,7 +65,7 @@ def run(device, repeats=3):
     gc.collect()
     if device == "cuda":
         torch.cuda.empty_cache()
-    
+
     return answer
 
 

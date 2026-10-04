@@ -1,14 +1,13 @@
 """Label unlabeled financial texts in dataset.json."""
 
+import asyncio
 import json
 import time
-import asyncio
 from pathlib import Path
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from schemas import FilingRecord, LabelOutput
-
 
 DATASET = Path(__file__).with_name("dataset.json")
 MODEL = "gpt-6-luna"
@@ -20,6 +19,8 @@ review_worthy: a potentially significant development that merits closer review.
 unclear: insufficient or conflicting information to decide.
 Uncertainty is your uncertainty about this label: 0.0 means certain, 1.0 means very uncertain.
 Use only increments of 0.1. Judge the supplied text alone. Return only label and uncertainty."""
+
+
 def annotation(record):
     return record["human"] if record["human"]["label"] is not None else record["llm"]
 
@@ -48,7 +49,9 @@ async def label_document(client, body):
         max_output_tokens=256,
     )
     if response.status != "completed" or any(
-        item.type == "refusal" for output in response.output for item in getattr(output, "content", [])
+        item.type == "refusal"
+        for output in response.output
+        for item in getattr(output, "content", [])
     ):
         raise ValueError(f"Model did not return a label: {response.status}")
     if response.output_parsed is None:
@@ -58,8 +61,10 @@ async def label_document(client, body):
 
 async def label_dataset():
     load_dotenv(Path(__file__).resolve().parents[1] / ".env")
-    records = [FilingRecord.model_validate(record).model_dump() for record in
-               json.loads(DATASET.read_text(encoding="utf-8"))]
+    records = [
+        FilingRecord.model_validate(record).model_dump()
+        for record in json.loads(DATASET.read_text(encoding="utf-8"))
+    ]
     pending = [i for i, record in enumerate(records) if annotation(record)["label"] is None]
     if not pending:
         print("No unlabeled records")
@@ -88,7 +93,9 @@ async def label_dataset():
         await asyncio.to_thread(save, records)
         if isinstance(exc, asyncio.CancelledError):
             raise
-        raise RuntimeError(f"Labeling stopped after {completed} completed; progress saved: {exc}") from exc
+        raise RuntimeError(
+            f"Labeling stopped after {completed} completed; progress saved: {exc}"
+        ) from exc
     finally:
         await client.close()
     return records
