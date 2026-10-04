@@ -4,3 +4,5 @@ __pycache__/
 /decision_models/laya_benchmark.json
 /decision_models/laya_review_sample.json
 /decision_models/benchmark_results/
+/decision_models/data/
+/decision_models/training_runs/
