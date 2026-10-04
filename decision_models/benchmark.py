@@ -40,6 +40,7 @@ class Benchmark:
 
     def __init__(self, device=None, splits=None):
         self.device = device
+        self.checkpoint = None
         self.split_manifest = None
         if splits is not None:
             self.split_manifest = json.loads((splits / "manifest.json").read_text(encoding="utf-8"))
@@ -244,6 +245,30 @@ class Benchmark:
             self.record(record, prediction, time.perf_counter() - before)
         return self.finish()
 
+    def run_head(self):
+        import torch
+        from train import DocumentModel
+
+        if self.checkpoint is None:
+            raise ValueError("Head inference needs --checkpoint pointing to best.pt")
+        model = DocumentModel(self.device or "cuda", checkpoint=self.checkpoint).eval()
+        self.start("head-attention", model="Laya supervised head + attention pooling",
+                   checkpoint_sha256=hashlib.sha256(self.checkpoint.read_bytes()).hexdigest(),
+                   training_config=model.training_config, selected_epoch=model.selected_epoch,
+                   device=str(model.device), confidence_note="Pooled document probabilities have not been calibrated.")
+        with torch.no_grad():
+            model(model.windows(self.sample[0]["body"]))
+            for record in self.sample:
+                torch.cuda.synchronize() if model.device.type == "cuda" else None
+                before = time.perf_counter()
+                logits, weights = model(model.windows(record["body"]))
+                probabilities = logits.softmax(-1).tolist()
+                torch.cuda.synchronize() if model.device.type == "cuda" else None
+                self.record(record, self.labels[logits.argmax().item()], time.perf_counter() - before,
+                            probabilities=dict(zip(self.labels, probabilities)),
+                            windows=len(weights), attention_max=float(weights.max()))
+        return self.finish()
+
     def run(self, models=("laya", "luna", "sol", "tfidf")):
         """Run approaches sequentially; OpenAI uses four concurrent requests per model."""
         results = {}
@@ -254,6 +279,8 @@ class Benchmark:
                 results[name] = self.run_laya()
             elif name == "tfidf":
                 results[name] = self.run_tfidf()
+            elif name == "head":
+                results[name] = self.run_head()
             else:
                 raise ValueError(f"Unknown benchmark approach: {name}")
         return results
@@ -261,10 +288,12 @@ class Benchmark:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--models", nargs="+", choices=("laya", "luna", "sol", "tfidf"),
+    parser.add_argument("--models", nargs="+", choices=("laya", "luna", "sol", "tfidf", "head"),
                         default=("laya", "luna", "sol", "tfidf"))
     parser.add_argument("--device", choices=("cpu", "cuda"), help="Laya device; defaults to CUDA when available")
     parser.add_argument("--splits", type=Path, help="Frozen JSONL split directory; otherwise use the 50-row pilot")
+    parser.add_argument("--checkpoint", type=Path, help="Trained head checkpoint (best.pt)")
     args = parser.parse_args()
     benchmark = Benchmark(device=args.device, splits=args.splits)
+    benchmark.checkpoint = args.checkpoint
     benchmark.run(args.models)
