@@ -1,4 +1,4 @@
-"""Compare Laya, OpenAI models and TF-IDF on the same 50 filings."""
+"""Compare Laya, OpenAI models and TF-IDF on the fixed pilot or a frozen test split."""
 
 import argparse
 import asyncio
@@ -9,8 +9,8 @@ import time
 import warnings
 from pathlib import Path
 
-from label import RUBRIC, annotation
-from schemas import LabelOutput
+from label import RUBRIC, annotation, save as save_json
+from schemas import LabelOutput, load_split
 
 
 HERE = Path(__file__).resolve().parent
@@ -38,8 +38,17 @@ class Benchmark:
         },
     }}
 
-    def __init__(self, device=None):
+    def __init__(self, device=None, splits=None):
         self.device = device
+        self.split_manifest = None
+        if splits is not None:
+            self.split_manifest = json.loads((splits / "manifest.json").read_text(encoding="utf-8"))
+
+            self.sample = load_split(splits, "test")
+            self.train = load_split(splits, "train")
+            if {self.body_hash(row) for row in self.sample} & {self.body_hash(row) for row in self.train}:
+                raise ValueError("Train and test bodies overlap")
+            return
         self.records = json.loads((HERE / "dataset.json").read_text(encoding="utf-8"))
         hashes = json.loads((HERE / "benchmark_sample.json").read_text(encoding="utf-8"))["body_sha256s"]
         if len(hashes) != 50 or len(set(hashes)) != 50:
@@ -62,14 +71,15 @@ class Benchmark:
             raise ValueError("Every benchmark row needs a human or LLM label")
         return label
 
-    def scores(self, rows):
-        matrix = {actual: {predicted: 0 for predicted in self.labels} for actual in self.labels}
+    @classmethod
+    def scores(cls, rows):
+        matrix = {actual: {predicted: 0 for predicted in cls.labels} for actual in cls.labels}
         for row in rows:
             matrix[row["reference"]][row["prediction"]] += 1
         per_label = {}
-        for label in self.labels:
+        for label in cls.labels:
             tp = matrix[label][label]
-            predicted = sum(matrix[actual][label] for actual in self.labels)
+            predicted = sum(matrix[actual][label] for actual in cls.labels)
             support = sum(matrix[label].values())
             precision = tp / predicted if predicted else 0
             recall = tp / support if support else 0
@@ -79,19 +89,22 @@ class Benchmark:
                 "support": support,
             }
         return {
-            "agreement": sum(matrix[label][label] for label in self.labels) / len(rows),
-            "macro_f1": sum(item["f1"] for item in per_label.values()) / len(self.labels),
-            "reference_distribution": {label: sum(matrix[label].values()) for label in self.labels},
-            "prediction_distribution": {label: sum(matrix[actual][label] for actual in self.labels) for label in self.labels},
+            "agreement": sum(matrix[label][label] for label in cls.labels) / len(rows),
+            "macro_f1": sum(item["f1"] for item in per_label.values()) / len(cls.labels),
+            "reference_distribution": {label: sum(matrix[label].values()) for label in cls.labels},
+            "prediction_distribution": {label: sum(matrix[actual][label] for actual in cls.labels) for label in cls.labels},
             "per_label": per_label, "confusion_matrix": matrix,
         }
 
     def start(self, filename, **metadata):
+        if self.split_manifest:
+            filename += "-heldout"
         self.output = HERE / "benchmark_results" / f"{filename}.json"
         self.rows = []
         self.started = time.perf_counter()
         self.result = {
             **metadata,
+            "split_manifest": self.split_manifest,
             "comparison": "Agreement with human labels when present, otherwise current LLM labels; not ground-truth accuracy.",
             "estimated_cost_per_run_usd": 0.0,
         }
@@ -107,7 +120,8 @@ class Benchmark:
         })
         # No await between recording and saving: successful concurrent responses stay saved.
         self.save()
-        print(f"{self.result['model']}: {len(self.rows)}/{len(self.sample)}", flush=True)
+        if len(self.rows) % 50 == 0 or len(self.rows) == len(self.sample):
+            print(f"{self.result['model']}: {len(self.rows)}/{len(self.sample)}", flush=True)
 
     def save(self):
         self.result.update(
@@ -116,9 +130,7 @@ class Benchmark:
             scores=self.scores(self.rows), predictions=self.rows,
         )
         self.output.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.output.with_suffix(".tmp")
-        temporary.write_text(json.dumps(self.result, indent=2) + "\n", encoding="utf-8")
-        temporary.replace(self.output)
+        save_json(self.result, self.output)
 
     def finish(self):
         latencies = sorted(row["latency_seconds"] for row in self.rows)
@@ -144,6 +156,7 @@ class Benchmark:
         self.start(f"laya-{device}", model=self.laya_model, model_revision=self.laya_revision,
                    device=device, model_load_seconds=time.perf_counter() - before,
                    confidence_note="The checkpoint warns that some confidence values are uncalibrated.")
+        agent.predict_long(self.sample[0]["body"], self.questions)  # Warm up before timing.
         for record in self.sample:
             if device == "cuda":
                 torch.cuda.synchronize()
@@ -165,7 +178,7 @@ class Benchmark:
         self.start(model, model=model, service_tier=self.service_tier,
                    reasoning_effort=self.reasoning_effort,
                    pricing_usd_per_million_tokens=self.rates[model],
-                   cost_note="Estimate for this 50-filing run from API token usage and short-context Flex rates; verify against account billing.",
+                   cost_note="Estimate for this run from API token usage and short-context Flex rates; verify against account billing.",
                    tokens={"input": 0, "cached_input": 0, "output": 0})
         semaphore = asyncio.Semaphore(self.concurrency)
         client = AsyncOpenAI(timeout=900.0, max_retries=8)
@@ -176,7 +189,7 @@ class Benchmark:
                 response = await client.responses.parse(
                     model=model, service_tier=self.service_tier,
                     reasoning={"effort": self.reasoning_effort}, instructions=RUBRIC,
-                    input=record["body"], text_format=LabelOutput, max_output_tokens=256,
+                    input=record["body"], text_format=LabelOutput, max_output_tokens=1024,
                 )
                 latency = time.perf_counter() - before
                 if response.status != "completed" or any(
@@ -251,5 +264,7 @@ if __name__ == "__main__":
     parser.add_argument("--models", nargs="+", choices=("laya", "luna", "sol", "tfidf"),
                         default=("laya", "luna", "sol", "tfidf"))
     parser.add_argument("--device", choices=("cpu", "cuda"), help="Laya device; defaults to CUDA when available")
+    parser.add_argument("--splits", type=Path, help="Frozen JSONL split directory; otherwise use the 50-row pilot")
     args = parser.parse_args()
-    Benchmark(device=args.device).run(args.models)
+    benchmark = Benchmark(device=args.device, splits=args.splits)
+    benchmark.run(args.models)
