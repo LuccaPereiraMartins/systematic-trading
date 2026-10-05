@@ -72,9 +72,15 @@ python decision_models/benchmark.py --models laya --device cuda --splits decisio
 
 `data/splits/` contains `train.jsonl`, `validation.jsonl`, `test.jsonl` and `manifest.json`. The manifest records counts, date ranges, the source fingerprint and split checksums. Rerunning the split produces identical files and refuses to overwrite different existing split contents. The benchmark verifies split checksums and excludes validation from TF-IDF training. Held-out results use separate `*-heldout.json` files under `benchmark_results/`; base Laya uses the same pinned checkpoint and `predict_long()` as the pilot, with a warm-up before timing.
 
-The source JSON SHA-256 is `b2f8b418b116b07bafaae400279a21be5a7ccf7012d6d353d1abed2d3567829f`; the test JSONL SHA-256 is `0adfc7e1d37a0820cad3d2ac56ec7042d8d8b0d44ee55ff0ebb912a876545b42`. Files remain ignored by Git. Human corrections should create a new dataset/split version, preserving the benchmark's original references.
+The source JSON SHA-256 is `b2f8b418b116b07bafaae400279a21be5a7ccf7012d6d353d1abed2d3567829f`; the test JSONL SHA-256 is `0adfc7e1d37a0820cad3d2ac56ec7042d8d8b0d44ee55ff0ebb912a876545b42`. Extracted files remain ignored by Git; the frozen split ZIP is committed. Human corrections should create a new dataset/split version, preserving the benchmark's original references.
 
-For sharing, transfer `data/filings-10k-splits.zip` (14.1 MB compressed, 78.7 MB extracted). It contains all three JSONL files and the manifest. A colleague can extract it into `decision_models/data/splits/` and use the same command above. JSONL retains the full text and annotation schema, with one record per line. Regenerate the ZIP with:
+The committed `data/filings-10k-splits.zip` (14.1 MB compressed, 78.7 MB extracted) contains all 10,000 rows across the three JSONL files and the manifest. JSONL retains the full text and annotation schema, with one record per line. Extract it after cloning, then use the benchmark command above:
+
+```powershell
+python -m zipfile -e decision_models/data/filings-10k-splits.zip decision_models/data/splits
+```
+
+Regenerate the ZIP with:
 
 ```powershell
 python -m zipfile -c decision_models/data/filings-10k-splits.zip decision_models/data/splits/train.jsonl decision_models/data/splits/validation.jsonl decision_models/data/splits/test.jsonl decision_models/data/splits/manifest.json
