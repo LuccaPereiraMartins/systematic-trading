@@ -5,6 +5,7 @@ Benchmarks, post-training experiments and a small CPU API for financial-document
 ## API
 
 ```bash
+cp env.example .env  # If you do not already have .env; Windows: copy env.example .env
 docker compose up --build
 ```
 
@@ -33,7 +34,7 @@ uv pip install --system --group models --group encoders --group laya
 cp env.example .env  # Windows: copy env.example .env
 ```
 
-GPU experiments need CUDA-enabled PyTorch. Never commit `.env`. The API does not use it.
+GPU experiments need CUDA-enabled PyTorch. Never commit `.env`. Compose loads it for local convenience; the API itself needs no credentials.
 
 ## Research
 
@@ -41,4 +42,4 @@ See [the benchmark guide](decision_models/README.md) for data, commands, compara
 
 ## Development
 
-CI runs lint, builds the model/API image and checks health/inference on branch pushes and pull requests. There is no separate test suite. Update and commit `uv.lock` with dependency changes.
+CI runs lint, builds the model/API image and checks container inference on branch pushes and pull requests. There is no separate test suite. Update and commit `uv.lock` with dependency changes.
