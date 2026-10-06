@@ -1,6 +1,6 @@
 """Shared dataset and model-output schemas."""
 
-from typing import Literal
+from typing import Literal, get_args
 import hashlib
 import json
 
@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 
 LabelName = Literal["routine", "review_worthy", "unclear"]
+LABELS = get_args(LabelName)
 Uncertainty = Literal[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 
 

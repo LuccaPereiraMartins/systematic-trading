@@ -115,8 +115,8 @@ Laya missed 181 of the 656 review-worthy references and never predicted unclear.
 The selected epoch-1 checkpoint was trained on 8,000 raw documents and selected using macro F1 on the separate 1,000-document validation set. Training froze the encoder and adapted the existing head plus a small attention pooler, using one whole-document loss across all overlapping windows. One epoch took 44.0 minutes locally, including both validation passes, with 2.72 GiB peak allocated CUDA memory. This comparison changes both head weights and document aggregation; it does not isolate either contribution.
 
 ```powershell
-python decision_models/train.py
-python decision_models/benchmark.py --models head --device cuda --splits decision_models/data/splits --checkpoint decision_models/training_runs/head/best.pt
+python decision_models/train.py --selection raw
+python decision_models/benchmark.py --saved decision_models/training_runs/head --device cuda --splits decision_models/data/splits
 ```
 
 | Label | Reference count | Predicted count | Precision | Recall | F1 |
@@ -125,4 +125,39 @@ python decision_models/benchmark.py --models head --device cuda --splits decisio
 | Review-worthy | 656 | 960 | 66.5% | 97.3% | 0.790 |
 | Unclear | 97 | 29 | 44.8% | 13.4% | 0.206 |
 
-The adapted model missed 18 review-worthy references, versus 181 for the base model, but flagged 96% of documents as review-worthy. Agreement is only 0.1 percentage point above the majority baseline, and macro F1 is slightly below base Laya. The training pipeline works; this checkpoint does not yet offer useful filtering. Next compare class-balanced loss and learning rates on validation. Document probabilities remain uncalibrated. All 1,000 test body hashes, the split manifest and the selected checkpoint fingerprint were verified; results are saved locally in `benchmark_results/head-attention-heldout.json`.
+The adapted model missed 18 review-worthy references, versus 181 for the base model, but flagged 96% of documents as review-worthy. Agreement is only 0.1 percentage point above the majority baseline, and macro F1 is slightly below base Laya. The training pipeline works; this checkpoint does not yet offer useful filtering. The validation-tuned experiments below address class weighting, decision tuning and LoRA. Document probabilities remain uncalibrated. All 1,000 test body hashes, the split manifest and the selected checkpoint fingerprint were verified; results are saved locally in `benchmark_results/head-attention-heldout.json`.
+
+## Validation-tuned experiments - 2026-10-06
+
+Trained on 8,000 raw filings; selected hyperparameters, checkpoints and decision offsets on the separate 1,000 validation rows. Nine family winners and their artifact/config/decision fingerprints were frozen before these test evaluations. Each evaluated all 1,000 test filings once, sequentially without competing GPU jobs.
+
+| Approach | Validation macro F1 | Test macro F1 | Test agreement | Inference p50 / p95 | API cost per 1,000-filing run |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Word TF-IDF | 0.685 | 0.687 | 76.9% | 1.7 / 3.3 ms | $0 |
+| Character TF-IDF | 0.689 | 0.693 | 77.7% | 4.5 / 11.0 ms | $0 |
+| Frozen FinBERT + LR | 0.661 | 0.654 | 72.5% | 26.5 / 51.0 ms | $0 |
+| Frozen BGE + LR | 0.637 | 0.619 | 70.7% | 14.1 / 24.8 ms | $0 |
+| FinBERT + LoRA | 0.695 | 0.708 | 77.5% | 28.5 / 54.4 ms | $0 |
+| BGE + LoRA | 0.677 | 0.669 | 73.4% | 16.4 / 27.6 ms | $0 |
+| Weighted Laya head | 0.549 | 0.539 | 61.9% | 176.2 / 542.4 ms | $0 |
+| Laya + LoRA (1 epoch) | 0.644 | 0.663 | 73.9% | 188.2 / 580.4 ms | $0 |
+| Character TF-IDF / BGE LoRA | 0.712 | 0.695 | 77.3% | 22.0 / 38.5 ms | $0 |
+
+FinBERT LoRA has the highest observed test macro F1 (0.708). Character TF-IDF is a strong CPU baseline (0.693; mean 5.7 ms). Mean latency is 32.7 ms for FinBERT LoRA and 274.4 ms for Laya LoRA. Latency includes tokenization and all document windows after warm-up, excluding result writes. Local API costs exclude hardware and electricity. FinBERT's test F1 advantage over character TF-IDF is 0.0152; its paired bootstrap 95% interval is -0.021 to +0.051, so this sample does not establish a clear winner between them.
+
+The character/BGE blend was the **validation-selected winner** (0.712), but its test gain over character TF-IDF is only 0.0024 macro F1. A paired bootstrap (2,000 test-row resamples, seed 42) gives a 95% interval of -0.026 to +0.030 for that difference; the gain is not convincing. No weights or offsets changed after test.
+
+Laya LoRA improves over the first raw supervised head (0.347 to 0.663 test F1), but remains below character TF-IDF and is much slower. That comparison changes class weighting, pooling, encoder adaptation and the decision rule together; it does not isolate a causal LoRA effect. The weighted head with the same tuned decision protocol reaches 0.539.
+
+### Recall by label
+
+| Approach | Routine | Review-worthy | Unclear | Missed review-worthy / 656 |
+| --- | ---: | ---: | ---: | ---: |
+| Character TF-IDF | 68.0% | 84.3% | 57.7% | 103 |
+| FinBERT + LoRA | 73.3% | 80.0% | 71.1% | 131 |
+| Laya + LoRA (1 epoch) | 73.7% | 75.8% | 61.9% | 159 |
+| Character TF-IDF / BGE LoRA | 74.9% | 80.5% | 61.9% | 128 |
+
+All nine result files passed checks for complete unique test coverage, matching references/split checksums, unchanged selected artifacts, finite normalized probabilities, independently recomputed scores and latency summaries, and zero API cost. Laya stopped safely after one full epoch at the user's request; its optimizer/RNG are saved for later resumption.
+
+These are agreements with provisional Luna labels. The random split can share issuers and similar templates across partitions. Test was previously used for the historical base/head report; no new test predictions were used in this validation search. Human-reviewed and temporal/issuer-disjoint data are needed before claims about real-world analyst utility. See [post_training.md](post_training.md) for training and rerun recipes.

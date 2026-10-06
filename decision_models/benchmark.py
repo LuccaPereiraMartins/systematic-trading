@@ -10,14 +10,74 @@ import warnings
 from pathlib import Path
 
 from label import RUBRIC, annotation, save as save_json
-from schemas import LabelOutput, load_split
+from schemas import LABELS, LabelOutput, load_split
 
 
 HERE = Path(__file__).resolve().parent
 
 
+class SavedModel:
+    """One inference interface for a saved neural head or a fitted linear baseline."""
+
+    def __init__(self, directory, device="cuda"):
+        import numpy as np
+        import torch
+        torch.set_num_threads(4)
+        self.directory = directory
+        self.config = json.loads((directory / "config.json").read_text(encoding="utf-8"))
+        if self.config["labels"] != list(Benchmark.labels):
+            raise ValueError("Saved model label order differs from benchmark")
+        decision = directory / "decision.json"
+        self.decision = json.loads(decision.read_text(encoding="utf-8")) if decision.exists() else {"offsets": [0, 0, 0]}
+        if decision.exists() and self.decision["validation_sha256"] != hashlib.sha256((directory/"validation.json").read_bytes()).hexdigest():
+            raise ValueError("Validation predictions changed after decision tuning")
+        self.device = device
+        self.encoder = None
+        self.linear = self.config.get("family") == "linear"
+        self.blend = self.config.get("family") == "blend"
+        self.artifact = directory / ("config.json" if self.blend else "model.joblib" if self.linear else "best.pt")
+        if self.blend:
+            self.model = [SavedModel(HERE/member["directory"], device) for member in self.config["members"]]
+            for member, saved in zip(self.model, self.config["members"]):
+                if hashlib.sha256(member.artifact.read_bytes()).hexdigest() != saved["artifact_sha256"]:
+                    raise ValueError("Blend member changed after validation selection")
+            if all(member.device == "cpu" for member in self.model):
+                self.device = "cpu"
+        elif self.linear:
+            if self.config["kind"] in ("tfidf", "char"):
+                self.device = "cpu"
+            import joblib
+            self.model = joblib.load(directory / "model.joblib")
+            self.order = [list(self.model.classes_).index(label) for label in Benchmark.labels]
+            if self.config["kind"] in ("finbert", "bge"):
+                from encoders import EncoderModel
+                self.encoder = EncoderModel(device, config=self.config).eval()
+        else:
+            from train import load_model
+            self.model = load_model(device, checkpoint=directory / "best.pt").eval()
+        self.offsets = np.array(self.decision["offsets"])
+        if "artifact_sha256" in self.decision and self.decision["artifact_sha256"] != hashlib.sha256(self.artifact.read_bytes()).hexdigest():
+            raise ValueError("Model changed after decision tuning")
+
+    def probabilities(self, body):
+        import numpy as np
+        import torch
+        if self.blend:
+            return np.average([member.probabilities(body) for member in self.model], axis=0, weights=self.config["weights"])
+        with torch.no_grad():
+            if not self.linear:
+                logits, _ = self.model(self.model.windows(body))
+                return logits.softmax(-1).cpu().numpy()
+            if self.encoder:
+                vector = self.encoder.features(self.encoder.windows(body)).mean(0)
+                inputs = torch.nn.functional.normalize(vector, dim=0).cpu().numpy()[None]
+            else:
+                inputs = [body]
+            return self.model.predict_proba(inputs)[0, self.order]
+
+
 class Benchmark:
-    labels = ("routine", "review_worthy", "unclear")
+    labels = LABELS
     models = {"luna": "gpt-6-luna", "sol": "gpt-6.1-sol"}
     rates = {
         "gpt-6-luna": {"input": 0.05, "cached_input": 0.005, "output": 0.25},
@@ -40,7 +100,6 @@ class Benchmark:
 
     def __init__(self, device=None, splits=None):
         self.device = device
-        self.checkpoint = None
         self.split_manifest = None
         if splits is not None:
             self.split_manifest = json.loads((splits / "manifest.json").read_text(encoding="utf-8"))
@@ -245,28 +304,28 @@ class Benchmark:
             self.record(record, prediction, time.perf_counter() - before)
         return self.finish()
 
-    def run_head(self):
+    def run_saved(self, directory):
+        import numpy as np
         import torch
-        from train import DocumentModel
-
-        if self.checkpoint is None:
-            raise ValueError("Head inference needs --checkpoint pointing to best.pt")
-        model = DocumentModel(self.device or "cuda", checkpoint=self.checkpoint).eval()
-        self.start("head-attention", model="Laya supervised head + attention pooling",
-                   checkpoint_sha256=hashlib.sha256(self.checkpoint.read_bytes()).hexdigest(),
-                   training_config=model.training_config, selected_epoch=model.selected_epoch,
-                   device=str(model.device), confidence_note="Pooled document probabilities have not been calibrated.")
-        with torch.no_grad():
-            model(model.windows(self.sample[0]["body"]))
-            for record in self.sample:
-                torch.cuda.synchronize() if model.device.type == "cuda" else None
-                before = time.perf_counter()
-                logits, weights = model(model.windows(record["body"]))
-                probabilities = logits.softmax(-1).tolist()
-                torch.cuda.synchronize() if model.device.type == "cuda" else None
-                self.record(record, self.labels[logits.argmax().item()], time.perf_counter() - before,
-                            probabilities=dict(zip(self.labels, probabilities)),
-                            windows=len(weights), attention_max=float(weights.max()))
+        model = SavedModel(directory, self.device or "cuda")
+        if self.split_manifest != model.config["split_manifest"]:
+            raise ValueError("Saved model and benchmark use different splits")
+        self.start(directory.name, model=directory.name, training_config=model.config,
+                   decision=model.decision, device=model.device,
+                   selected_epoch=getattr(model.model, "selected_epoch", None),
+                   artifact_sha256=hashlib.sha256(model.artifact.read_bytes()).hexdigest(),
+                   confidence_note="Decision offsets optimize validation macro F1; probabilities are uncalibrated.")
+        model.probabilities(self.sample[0]["body"])
+        for row in self.sample:
+            if model.device == "cuda":
+                torch.cuda.synchronize()
+            started = time.perf_counter()
+            probabilities = model.probabilities(row["body"])
+            prediction = self.labels[(np.log(np.maximum(probabilities, 1e-12))+model.offsets).argmax()]
+            if model.device == "cuda":
+                torch.cuda.synchronize()
+            self.record(row, prediction, time.perf_counter()-started,
+                        probabilities=dict(zip(self.labels, map(float, probabilities))))
         return self.finish()
 
     def run(self, models=("laya", "luna", "sol", "tfidf")):
@@ -279,8 +338,6 @@ class Benchmark:
                 results[name] = self.run_laya()
             elif name == "tfidf":
                 results[name] = self.run_tfidf()
-            elif name == "head":
-                results[name] = self.run_head()
             else:
                 raise ValueError(f"Unknown benchmark approach: {name}")
         return results
@@ -288,12 +345,15 @@ class Benchmark:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--models", nargs="+", choices=("laya", "luna", "sol", "tfidf", "head"),
+    parser.add_argument("--models", nargs="+", choices=("laya", "luna", "sol", "tfidf"),
                         default=("laya", "luna", "sol", "tfidf"))
     parser.add_argument("--device", choices=("cpu", "cuda"), help="Laya device; defaults to CUDA when available")
     parser.add_argument("--splits", type=Path, help="Frozen JSONL split directory; otherwise use the 50-row pilot")
-    parser.add_argument("--checkpoint", type=Path, help="Trained head checkpoint (best.pt)")
+    parser.add_argument("--saved", type=Path, nargs="+", help="Evaluate these validation-selected run directories")
     args = parser.parse_args()
     benchmark = Benchmark(device=args.device, splits=args.splits)
-    benchmark.checkpoint = args.checkpoint
-    benchmark.run(args.models)
+    if args.saved:
+        for directory in args.saved:
+            benchmark.run_saved(directory)
+    else:
+        benchmark.run(args.models)
