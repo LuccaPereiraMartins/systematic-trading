@@ -83,6 +83,7 @@ class Benchmark:
         "gpt-6-luna": {"input": 0.05, "cached_input": 0.005, "output": 0.25},
         "gpt-6.1-sol": {"input": 1.00, "cached_input": 0.05, "output": 5.00},
     }
+    baselines = ("majority", "length_raw", "length_item", "keyword_prior", "keyword_learned", "bge_lr", "finbert_lr", "finbert_ft")
     concurrency = 4
     service_tier = "flex"
     reasoning_effort = "low"
@@ -328,6 +329,17 @@ class Benchmark:
                         probabilities=dict(zip(self.labels, map(float, probabilities))))
         return self.finish()
 
+    def run_baseline(self, name):
+        from baselines import APPROACHES, make
+        model = make(name)
+        self.start(name, model=APPROACHES[name][0], training_examples=len(self.train))
+        model.fit([r["body"] for r in self.train], [self.reference(r) for r in self.train])
+        for record in self.sample:
+            before = time.perf_counter()
+            prediction = model.predict([record["body"]])[0]
+            self.record(record, prediction, time.perf_counter()-before)
+        return self.finish()
+
     def run(self, models=("laya", "luna", "sol", "tfidf")):
         """Run approaches sequentially; OpenAI uses four concurrent requests per model."""
         results = {}
@@ -338,6 +350,8 @@ class Benchmark:
                 results[name] = self.run_laya()
             elif name == "tfidf":
                 results[name] = self.run_tfidf()
+            elif name in self.baselines:
+                results[name] = self.run_baseline(name)
             else:
                 raise ValueError(f"Unknown benchmark approach: {name}")
         return results
@@ -345,7 +359,7 @@ class Benchmark:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--models", nargs="+", choices=("laya", "luna", "sol", "tfidf"),
+    parser.add_argument("--models", nargs="+", choices=("laya", "luna", "sol", "tfidf", *Benchmark.baselines),
                         default=("laya", "luna", "sol", "tfidf"))
     parser.add_argument("--device", choices=("cpu", "cuda"), help="Laya device; defaults to CUDA when available")
     parser.add_argument("--splits", type=Path, help="Frozen JSONL split directory; otherwise use the 50-row pilot")
