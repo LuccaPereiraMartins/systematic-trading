@@ -1,4 +1,4 @@
-"""Full-document FinBERT/BGE heads and LoRA, adapted from Matt's frozen-encoder baseline."""
+"""Full-document FinBERT/BGE heads and LoRA."""
 
 import torch
 from torch import nn

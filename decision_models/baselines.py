@@ -1,4 +1,4 @@
-"""Matt's majority, length, keyword, TF-IDF and capped/cleaned encoder baselines.
+"""Majority, length, keyword, TF-IDF and capped/cleaned encoder baselines.
 
 Factories provide sklearn estimators. tune.py selects parameters on our frozen validation
 split; evaluate.py runs the common held-out test. Historical trials are in experiments.md.
@@ -318,22 +318,25 @@ APPROACHES = {
             ),
         ),
     ),
-    "tfidf": (
+    "tfidf_balanced": (
         "TF-IDF uni/bi-grams on the full body + balanced logistic regression (as in the original benchmark)",
         lambda cache: make_pipeline(
             TfidfVectorizer(ngram_range=(1, 2), min_df=2, max_features=100_000),
             LogisticRegression(max_iter=1000, class_weight="balanced"),
         ),
     ),
-    "bge_lr": (
+    "bge_capped": (
         "Frozen bge-small-en-v1.5 window embeddings + logistic regression",
         lambda cache: embedding_pipeline("BAAI/bge-small-en-v1.5", "cls", cache),
     ),
-    "finbert_lr": (
+    "finbert_capped": (
         "Frozen ProsusAI/finbert window embeddings + logistic regression",
         lambda cache: embedding_pipeline("ProsusAI/finbert", "mean", cache),
     ),
 }
+
+
+FITTED_MODELS = (*APPROACHES, "tfidf", "char", "finbert", "bge")
 
 
 def make(name, cache=False):

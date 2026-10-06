@@ -16,6 +16,7 @@ from sklearn.metrics import f1_score
 from sklearn.preprocessing import StandardScaler
 from threadpoolctl import threadpool_limits
 
+from baselines import APPROACHES, FITTED_MODELS, make
 from benchmark import Benchmark
 from schemas import annotation, load_split, replace_file, save
 
@@ -181,15 +182,14 @@ def fit(args):
     from sklearn.base import clone
     from sklearn.model_selection import GridSearchCV, ParameterGrid
     from sklearn.pipeline import Pipeline
-    from baselines import make
     from encoders import MODELS
 
     train, validation = [load_split(args.splits, name) for name in ("train", "validation")]
     texts, y = [r["body"] for r in train], [annotation(r)["label"] for r in train]
     vtexts = [r["body"] for r in validation]
-    matt = args.model.startswith("matt_")
-    if matt:
-        prototype = make(args.model.removeprefix("matt_"), cache=True)
+    baseline = args.model in APPROACHES
+    if baseline:
+        prototype = make(args.model, cache=True)
         for step in getattr(prototype, "named_steps", {}).values():
             if hasattr(step, "device"):
                 step.device = args.device
@@ -231,13 +231,13 @@ def fit(args):
     model_id, revision = MODELS.get(args.model, (None, None))
     config = {
         "kind": args.model,
-        "family": "baseline" if matt else "linear",
+        "family": "baseline" if baseline else "linear",
         "model": model_id,
         "revision": revision,
         "embedding_device": args.device if model_id else None,
         "labels": list(LABELS),
         "split_manifest": json.loads((args.splits / "manifest.json").read_text(encoding="utf-8")),
-        "precision": "fp32" if matt else "bf16 encoder CUDA / fp32 classifier",
+        "precision": "fp32" if baseline else "bf16 encoder CUDA / fp32 classifier",
         "source_sha256": {n: hashlib.sha256((source / n).read_bytes()).hexdigest() for n in files},
         "versions": {n: version(n) for n in ("scikit-learn", "numpy", "torch", "transformers")},
     }
@@ -276,20 +276,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--model",
-        choices=(
-            "tfidf",
-            "char",
-            "finbert",
-            "bge",
-            "matt_majority",
-            "matt_length_raw",
-            "matt_length_item",
-            "matt_keyword_prior",
-            "matt_keyword_learned",
-            "matt_tfidf",
-            "matt_bge_lr",
-            "matt_finbert_lr",
-        ),
+        choices=FITTED_MODELS,
         default="tfidf",
     )
     parser.add_argument("--splits", type=Path, default=HERE / "data/splits")

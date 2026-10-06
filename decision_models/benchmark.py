@@ -52,7 +52,8 @@ class SavedModel:
                 self.device = "cpu"
         elif self.linear:
             if self.config["kind"] in ("tfidf", "char") or (
-                self.config["family"] == "baseline" and self.config["kind"] not in ("matt_finbert_lr", "matt_bge_lr")
+                self.config["family"] == "baseline"
+                and self.config["kind"] not in ("finbert_capped", "bge_capped", "matt_finbert_lr", "matt_bge_lr")
             ):
                 self.device = "cpu"
             import joblib
@@ -323,9 +324,15 @@ class Benchmark:
         model = SavedModel(directory, self.device or "cuda")
         if self.split_manifest != model.config["split_manifest"]:
             raise ValueError("Saved model and benchmark use different splits")
+        # Preserve old checkpoint metadata while using the current approach names.
+        name = {
+            "matt_tfidf": "tfidf_balanced",
+            "matt_bge_lr": "bge_capped",
+            "matt_finbert_lr": "finbert_capped",
+        }.get(directory.name, directory.name.removeprefix("matt_"))
         self.start(
-            directory.name,
-            model=directory.name,
+            name,
+            model=name,
             training_config=model.config,
             decision=model.decision,
             device=model.device,

@@ -1,4 +1,4 @@
-"""Fit Matt's baselines on train/validation, freeze choices, then evaluate the common test."""
+"""Fit baselines on train/validation, freeze choices, then evaluate the common test."""
 
 import argparse
 import hashlib
@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from datetime import datetime, timezone
 
-from baselines import APPROACHES
+from baselines import FITTED_MODELS
 from schemas import HERE, SPLITS, body_hash, load_split, save
 
 
@@ -55,7 +55,7 @@ def evaluate(models, splits=SPLITS, output=HERE / "training_runs", device="cuda"
     }
     save(
         {"created_utc": datetime.now(timezone.utc).isoformat(), "split_manifest": manifest, "models": selected},
-        output / "matt_selection.json",
+        output / "selection.json",
     )
     for directory in directories:
         print(f"Evaluating {directory.name} on the frozen test", flush=True)
@@ -77,8 +77,7 @@ def evaluate(models, splits=SPLITS, output=HERE / "training_runs", device="cuda"
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    names = tuple("matt_" + name for name in APPROACHES)
-    parser.add_argument("--models", nargs="+", choices=names, default=names)
+    parser.add_argument("--models", nargs="+", choices=FITTED_MODELS, default=FITTED_MODELS)
     parser.add_argument("--splits", type=Path, default=SPLITS)
     parser.add_argument("--output", type=Path, default=HERE / "training_runs")
     parser.add_argument("--device", choices=("cpu", "cuda"), default="cuda")

@@ -55,7 +55,9 @@ def test_length_threshold_cuts_between_classes():
     assert list(model.predict(np.log1p([[15], [2500]]))) == ["routine", "review_worthy"]
 
 
-@pytest.mark.parametrize("name", ["majority", "length_raw", "length_item", "keyword_prior", "keyword_learned", "tfidf"])
+@pytest.mark.parametrize(
+    "name", ["majority", "length_raw", "length_item", "keyword_prior", "keyword_learned", "tfidf_balanced"]
+)
 def test_cheap_baselines_fit_and_predict(name):
     routine = [f"Item 7.01 Regulation FD furnished investor presentation {i}" for i in range(12)]
     material = [f"Item 1.01 merger agreement default bankruptcy covenant credit agreement {i} " * 5 for i in range(12)]

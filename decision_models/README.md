@@ -9,9 +9,9 @@ Classify a document as `routine`, `review_worthy` or `unclear` for investment-an
 | `schemas.py` | Shared records, labels, human precedence, file saving and verified split loading |
 | `collect.py` / `label.py` | EDGAR collection and resumable Luna/Flex labeling |
 | `split.py` | Reproduce the frozen train/validation/test partition |
-| `baselines.py` | Matt's majority, length, keyword, TF-IDF and frozen-encoder recipes |
+| `baselines.py` | Majority, length, keyword, TF-IDF and frozen-encoder recipes |
 | `tune.py` | Fit linear models and select hyperparameters, decision offsets or blends on validation |
-| `evaluate.py` | Fit all eight Matt baselines, freeze selections, then evaluate the common test |
+| `evaluate.py` | Fit the core baselines, freeze selections, then evaluate the common test |
 | `benchmark.py` | Common scoring, latency and per-run cost for base Laya, saved models and OpenAI |
 | `encoders.py` / `train.py` | Frozen encoders, document-level head adaptation and LoRA training |
 | `laya_infer.py` | Small CPU/GPU inference example |
@@ -45,16 +45,16 @@ Set `SEC_USER_AGENT` and `OPENAI_API_KEY` in the root `.env` for collection/labe
 ## Benchmarks
 
 ```bash
-# Eight Matt baselines: train -> validation selection -> freeze -> test
+# Core baselines: train -> validation selection -> freeze -> test
 python decision_models/evaluate.py
 # CPU-only subset
-python decision_models/evaluate.py --models matt_majority matt_tfidf --device cpu
+python decision_models/evaluate.py --models majority tfidf_balanced --device cpu
 # Base Laya only (default); OpenAI runs require explicit selection and incur charges
 python decision_models/benchmark.py --models laya --device cuda
 python decision_models/benchmark.py --models luna sol
 ```
 
-`evaluate.py` reuses fitted runs only when their sources and manifest match; use `--refit` intentionally after changes. It does not rerun neural training. Saved-model evaluation recomputes predictions and latency. Matt's inner cross-validation is replaced here by the same fixed validation selection used for our models.
+`evaluate.py` reuses fitted runs only when their sources and manifest match; use `--refit` intentionally after changes. It does not rerun neural training. Saved-model evaluation recomputes predictions and latency. All fitted approaches use the same fixed validation selection.
 
 For another fitted variant:
 
@@ -63,32 +63,32 @@ python decision_models/tune.py --model char --regularization 0.001 0.01 0.1 1 10
 python decision_models/benchmark.py --saved decision_models/training_runs/char-new
 ```
 
-Choices in `tune.py`: word/character TF-IDF, raw frozen FinBERT/BGE, and the eight `matt_` approaches. Vocabularies/scalers fit training only. Hyperparameters and class log-probability offsets maximize validation macro F1; test is scored after freezing choices. Offsets improve class decisions; they do not calibrate probabilities. Avoid choosing further variants from test scores.
+The shared `FITTED_MODELS` list in `baselines.py` defines the twelve approaches for `tune.py` and `evaluate.py`: majority, raw/Item length, prior/learned keywords, balanced/tuned word TF-IDF, character TF-IDF, and raw/capped FinBERT/BGE. Vocabularies/scalers fit training only. Hyperparameters and class log-probability offsets maximize validation macro F1; test is scored after freezing choices. Offsets improve class decisions; they do not calibrate probabilities. Avoid choosing further variants from test scores.
 
-Matt's substantive variants select text from Item headings through SIGNATURES, with fallback for absent headings. His encoder variants average at most four 510-token windows in fp32 before balanced logistic regression. Our frozen variants retain all raw windows; these comparisons change preprocessing/pooling as well as the encoder. Original factory cross-validation remains available for the small compatibility checks, but the shared runner does not use it.
+Substantive variants select text from Item headings through SIGNATURES, with fallback for absent headings. Capped encoder variants average at most four 510-token windows in fp32 before balanced logistic regression. Full-document frozen variants retain all raw windows; these comparisons change preprocessing/pooling as well as the encoder. Original factory cross-validation remains available for the small compatibility checks, but the shared runner does not use it.
 
 ### Common 1,000-row test
 
 | Approach | Agreement | Macro F1 | Mean ms | P50 ms | P95 ms | API cost/run |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Matt: majority | 65.6% | 0.264 | 0.13 | 0.13 | 0.18 | $0 |
-| Matt: raw length | 58.2% | 0.330 | 0.16 | 0.16 | 0.22 | $0 |
-| Matt: Item length | 57.0% | 0.341 | 0.21 | 0.20 | 0.30 | $0 |
-| Matt: prior keywords | 54.9% | 0.468 | 1.31 | 0.97 | 3.16 | $0 |
-| Matt: learned keywords | 71.8% | 0.657 | 5.85 | 5.69 | 7.03 | $0 |
-| Matt: word TF-IDF | 75.5% | 0.684 | 1.84 | 1.61 | 3.12 | $0 |
-| Matt: frozen BGE (cleaned/capped) | 74.1% | 0.669 | 15.74 | 12.91 | 31.13 | $0 |
-| Matt: frozen FinBERT (cleaned/capped) | 75.3% | 0.648 | 32.90 | 21.89 | 71.34 | $0 |
+| Majority | 65.6% | 0.264 | 0.13 | 0.13 | 0.18 | $0 |
+| Raw length | 58.2% | 0.330 | 0.16 | 0.16 | 0.22 | $0 |
+| Item length | 57.0% | 0.341 | 0.21 | 0.20 | 0.30 | $0 |
+| Prior keywords | 54.9% | 0.468 | 1.31 | 0.97 | 3.16 | $0 |
+| Learned keywords | 71.8% | 0.657 | 5.85 | 5.69 | 7.03 | $0 |
+| Word TF-IDF (fixed C, balanced) | 75.5% | 0.684 | 1.84 | 1.61 | 3.12 | $0 |
+| Tuned word TF-IDF | 76.9% | 0.687 | 1.93 | 1.68 | 3.34 | $0 |
+| Tuned character TF-IDF | 77.7% | 0.693 | 5.67 | 4.55 | 11.02 | $0 |
+| Frozen FinBERT (raw/all windows) | 72.5% | 0.654 | 30.74 | 26.55 | 51.04 | $0 |
+| Frozen FinBERT (cleaned/capped) | 75.3% | 0.648 | 32.90 | 21.89 | 71.34 | $0 |
+| FinBERT LoRA | 77.5% | 0.708 | 32.69 | 28.45 | 54.41 | $0 |
+| Frozen BGE (raw/all windows) | 70.7% | 0.619 | 16.08 | 14.12 | 24.84 | $0 |
+| Frozen BGE (cleaned/capped) | 74.1% | 0.669 | 15.74 | 12.91 | 31.13 | $0 |
+| BGE LoRA | 73.4% | 0.669 | 18.83 | 16.39 | 27.61 | $0 |
 | Base Laya | 57.3% | 0.352 | 290.16 | 205.40 | 565.47 | $0 |
 | Initial Laya head (raw decisions) | 65.7% | 0.347 | 256.18 | 178.57 | 535.29 | $0 |
 | Weighted Laya head | 61.9% | 0.539 | 257.27 | 176.25 | 542.36 | $0 |
 | Laya LoRA (one epoch) | 73.9% | 0.663 | 274.41 | 188.17 | 580.39 | $0 |
-| Tuned word TF-IDF | 76.9% | 0.687 | 1.93 | 1.68 | 3.34 | $0 |
-| Tuned character TF-IDF | 77.7% | 0.693 | 5.67 | 4.55 | 11.02 | $0 |
-| Frozen FinBERT (raw/all windows) | 72.5% | 0.654 | 30.74 | 26.55 | 51.04 | $0 |
-| Frozen BGE (raw/all windows) | 70.7% | 0.619 | 16.08 | 14.12 | 24.84 | $0 |
-| FinBERT LoRA | 77.5% | 0.708 | 32.69 | 28.45 | 54.41 | $0 |
-| BGE LoRA | 73.4% | 0.669 | 18.83 | 16.39 | 27.61 | $0 |
 | Character TF-IDF + BGE LoRA | 77.3% | 0.695 | 25.26 | 22.00 | 38.53 | $0 |
 
 Agreement and macro F1 use the same frozen references. Latency is warmed, single-document inference, including transformation/tokenization and GPU synchronization; loading, fitting and result-file writes are excluded. Local runs have $0 API cost per run; hardware/electricity are excluded. RTX 3060 12 GB, global Python 3.13, PyTorch 2.14/CUDA 12.6; shared-machine timings are approximate.
