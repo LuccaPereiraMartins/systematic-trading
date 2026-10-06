@@ -6,3 +6,5 @@ __pycache__/
 /decision_models/benchmark_results/
 /decision_models/data/
 /decision_models/training_runs/
+
+/decision_models/experiments.md
