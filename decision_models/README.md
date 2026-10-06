@@ -16,9 +16,9 @@ Classify a document as `routine`, `review_worthy` or `unclear` for investment-an
 | `benchmark.py` | Common scoring, latency and per-run cost for base Laya, saved models and OpenAI |
 | `encoders.py` | Neural model definitions, raw context windows and document pooling |
 | `train.py` | One training loop for heads/LoRA, caching, validation selection and resumable checkpoints |
-| `laya_infer.py` | Small CPU/GPU inference example |
+| `laya_infer.py` | Standalone CPU/GPU timing example with its own toy labels; not the held-out benchmark |
 
-Run commands from the repository root. Data, checkpoints, predictions and the detailed local `experiments.md` notebook are ignored. Only this guide and rerunnable code are maintained as documentation; Git retains earlier documentation and code versions.
+Run commands from the repository root after the [local setup](../README.md#local-setup). The root README covers the API and CI; this guide covers research. Generated data, checkpoints, predictions and the local `experiments.md` log are ignored, except for the committed split archive.
 
 ## Dataset and protocol
 
@@ -32,15 +32,16 @@ The 10,000 unique bodies span October 2025 through September 2026. Split seed 42
 
 Each record contains only `date`, `body`, `llm` and `human`. Each annotation has `label` and `uncertainty`; human uncertainty stays its own value, including null or 0.0. Canonical bodies stay raw throughout the active pipelines. There is no Item/SIGNATURES trimming or registrant extraction; callers can supply cleaned text if they choose. Other source types use the same body input.
 
-Collection and labeling are independent; they resume existing files:
+Collection and labeling are independent and resume existing files. To acquire a new dataset, use a separate file:
 
 ```bash
-python decision_models/collect.py --number 10000 --start 2025-10-01 --end 2026-09-30 --sample
-python decision_models/label.py
-python decision_models/split.py
+python decision_models/collect.py --number 10000 --start 2025-10-01 --end 2026-09-30 --sample --output decision_models/data/new-dataset.json
+python decision_models/label.py --dataset decision_models/data/new-dataset.json
 ```
 
-These commands use ignored `data/dataset.json`. Reproducing the split requires the exact original source JSON bytes, not a fresh live SEC pull; use the archive for the established benchmark. `split.py` refuses to overwrite a different frozen partition. New collections should use another `--output`; future splits need their own protocol.
+`--sample` distributes the target across calendar months; without arguments the collector selects the latest 50 indexed filings. Without explicit paths, collection and labeling use ignored `data/dataset.json`.
+
+Use the archive for the established benchmark. Recreating its partition with `split.py` requires the exact original source JSON bytes and pilot inputs; a fresh live SEC pull will differ. `split.py` refuses to overwrite a different frozen partition. New datasets need a separate split output and evaluation protocol.
 
 Set `SEC_USER_AGENT` and `OPENAI_API_KEY` in the root `.env` for collection/labeling. EDGAR requests use edgartools, async fetching and a shared 10-request/second limit. Exact dates come from filing indexes; main filing bodies exclude exhibits. Luna labeling uses four workers, low reasoning, 1,024 output tokens, Flex and capacity backoff; it skips labeled rows, saves progress and never upgrades the service tier. Other text sources can supply the same record schema.
 
@@ -65,11 +66,13 @@ python decision_models/tune.py --model char --regularization 0.001 0.01 0.1 1 10
 python decision_models/benchmark.py --saved decision_models/training_runs/char-new
 ```
 
-The shared `FITTED_MODELS` list in `baselines.py` defines five approaches: majority, word TF-IDF, character TF-IDF, FinBERT and BGE. Keep character TF-IDF because it is our strongest cheap baseline. Majority is the useful class-imbalance floor; a random baseline adds little here. Length/keyword rules, SEC-specific cleaning, capped encoders and their separate cross-validation implementation have been removed.
+The shared `FITTED_MODELS` list in `baselines.py` defines five approaches: majority, word TF-IDF, character TF-IDF, FinBERT and BGE. Majority measures the class-imbalance floor; character TF-IDF is the strongest cheap baseline in the completed runs.
 
 Vocabularies/scalers fit training only. Classifier regularization, class weights and log-probability decision offsets maximize validation macro F1; test is scored after freezing choices. Offsets change decisions, not probability calibration. Avoid choosing further variants from test scores.
 
-**Frozen encoder** means its pretrained weights never update: FinBERT/BGE encode generic 510-token context windows, produce one vector per window, then average all window vectors and normalize into one document vector for logistic regression. This retains the entire raw body without requiring it to fit in a single encoder call. `encoders.py` also supplies their attention heads and LoRA models; base Laya and OpenAI inference do not use those encoders. Neural adaptation learns attention over windows instead of averaging them, with one whole-document loss.
+**Frozen encoder** means its pretrained weights never update: FinBERT/BGE encode generic 510-token context windows, produce one vector per window, then average all window vectors and normalize into one document vector for logistic regression. This retains the entire raw body without requiring it to fit in a single encoder call. `encoders.py` also defines FinBERT/BGE attention heads and LoRA, plus adapted Laya models. Base Laya inference uses the Laya SDK directly; OpenAI inference uses the API.
+
+Neural adaptation learns attention over windows instead of averaging them, with one whole-document loss.
 
 ### Common 1,000-row test
 
@@ -89,7 +92,7 @@ Vocabularies/scalers fit training only. Classifier regularization, class weights
 | Laya LoRA (one epoch) | 73.9% | 0.663 | 274.41 | 188.17 | 580.39 | $0 |
 | Character TF-IDF + BGE LoRA | 77.3% | 0.695 | 25.26 | 22.00 | 38.53 | $0 |
 
-These are completed results, not a rerun of this refactor. Retired length/keyword and cleaned/capped experiments remain in the ignored `experiments.md` and Git history; their scores are not presented as raw-input baselines. Historical Laya runs asked specifically about an 8-K; the shared default now says financial document. Saved checkpoints retain their original question, including on resume.
+These are completed results, not a rerun of the refactor. The fixed balanced word model is the API recipe; the core benchmark tunes its own word model. Historical Laya runs asked specifically about an 8-K; the shared default now says financial document. Saved checkpoints retain their original question, including on resume.
 
 Agreement and macro F1 use the same frozen references. Latency is warmed, single-document inference, including transformation/tokenization and GPU synchronization; loading, fitting and result-file writes are excluded. Local runs have $0 API cost per run; hardware/electricity are excluded. RTX 3060 12 GB, global Python 3.13, PyTorch 2.14/CUDA 12.6; shared-machine timings are approximate.
 
@@ -107,11 +110,11 @@ python decision_models/train.py --model finbert --adaptation lora --lora-rank 8 
 python decision_models/benchmark.py --saved decision_models/training_runs/finbert-lora-new
 ```
 
-`train.py` keeps model construction/windowing in `encoders.py`, leaving one training loop. `tune.py` handles fixed-split linear fitting and validation-only selection; it no longer unwraps nested cross-validation factories. Checkpoint state, feature caches and source snapshots are retained because interruptions and long runs are common on local hardware.
+`train.py` owns the training loop, feature cache and resumable checkpoints; `encoders.py` owns model/window details. `tune.py` handles linear fitting and validation-only selection. Frozen FinBERT/BGE head training caches window features; LoRA recomputes features because encoder weights change.
 
-Use `--resume` with the same settings to continue; `--limit` makes a separate mechanics smoke run and never reads test. Training stores source snapshots, pinned revisions, settings, seed/runtime, optimizer/RNG state, validation history and best checkpoint. Selection includes epoch zero and uses validation F1 after offsets by default. Loss weights are applied before averaging document losses. LoRA updates query/value projections (Laya Wqkv), with rank 8, alpha 16 and dropout .05 in completed runs. Full FinBERT fine-tuning is excluded.
+Append `--resume` to the original training command to continue; `--limit` makes a separate mechanics smoke run and never reads test. Training stores source snapshots, pinned revisions, settings, seed/runtime, optimizer/RNG state, validation history and best checkpoint. Selection includes epoch zero and uses validation F1 after offsets by default. Loss weights are applied before averaging document losses. LoRA requires `--lora-rank 8` for the completed recipes: query/value projections (Laya Wqkv), alpha 16 and dropout .05. Full encoder fine-tuning is outside the current training options.
 
-Other completed recipes use the same commands with these settings (new output directories):
+Completed recipes use these settings and separate output directories. For LoRA, include `--lora-rank 8`:
 
 | Variant | Model | Adaptation | Head LR | Encoder LR | Weight power | Epochs |
 | --- | --- | --- | ---: | ---: | ---: | ---: |
@@ -120,11 +123,17 @@ Other completed recipes use the same commands with these settings (new output di
 | BGE LoRA | bge | lora | .001 | .0001 | 1 | 2 |
 | Laya LoRA | laya | lora | .00003 | .0001 | 1 | 1 |
 
-Completed word/character/frozen-linear grids use C = .001, .01, .1, 1, 10, 30, 100 and both unweighted/balanced classifiers. For a validation-selected blend, supply two fitted directories:
+Completed word/character/frozen-linear grids use C = .001, .01, .1, 1, 10, 30, 100 and both unweighted/balanced classifiers. Supply these values through `--regularization` to match that search; the default grid ends at 10. An optional blend selects its mixing weight and decision offsets on validation:
 
 ```bash
 python decision_models/tune.py --blend decision_models/training_runs/char-new decision_models/training_runs/bge-lora-new --output decision_models/training_runs/blend-new
 python decision_models/benchmark.py --saved decision_models/training_runs/blend-new
 ```
 
-Checkpoints, search trials, predictions and source snapshots remain local under `training_runs/` and `benchmark_results/`. The exhaustive local `experiments.md` consolidates successes, failed trials, checks and interpretation; these generated artifacts are not committed. Future work should strengthen labeling, issuer/temporal splits and baseline robustness before further post-training or RL.
+## Artifacts and historical experiments
+
+`training_runs/` stores fitted models, validation/search results, configuration, source snapshots and neural checkpoints. `benchmark_results/` stores test predictions and metrics. `data/cache/` stores reusable frozen features. All are ignored; `experiments.md` is the single local log of completed and failed trials.
+
+Retired length/keyword and cleaned/capped variants remain in that log and Git history. Their custom-transformer joblibs require the original source version; they are not supported by the active pipeline. Existing pure sklearn artifacts and neural checkpoints remain loadable. Source changes require `--refit` when using `evaluate.py`.
+
+Next work: stronger labels, issuer/temporal splits and baseline robustness before further post-training or RL. Performance on news or transcripts has not yet been evaluated.
