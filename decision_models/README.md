@@ -6,6 +6,7 @@ Classify a document as `routine`, `review_worthy` or `unclear` for investment-an
 
 | File | Purpose |
 | --- | --- |
+| `build_model.py` | Package the balanced word TF-IDF API model from the frozen training split |
 | `schemas.py` | Shared records, labels, human precedence, file saving and verified split loading |
 | `collect.py` / `label.py` | EDGAR collection and resumable Luna/Flex labeling |
 | `split.py` | Reproduce the frozen train/validation/test partition |
@@ -65,7 +66,7 @@ python decision_models/benchmark.py --saved decision_models/training_runs/char-n
 
 The shared `FITTED_MODELS` list in `baselines.py` defines the twelve approaches for `tune.py` and `evaluate.py`: majority, raw/Item length, prior/learned keywords, balanced/tuned word TF-IDF, character TF-IDF, and raw/capped FinBERT/BGE. Vocabularies/scalers fit training only. Hyperparameters and class log-probability offsets maximize validation macro F1; test is scored after freezing choices. Offsets improve class decisions; they do not calibrate probabilities. Avoid choosing further variants from test scores.
 
-Substantive variants select text from Item headings through SIGNATURES, with fallback for absent headings. Capped encoder variants average at most four 510-token windows in fp32 before balanced logistic regression. Full-document frozen variants retain all raw windows; these comparisons change preprocessing/pooling as well as the encoder. Original factory cross-validation remains available for the small compatibility checks, but the shared runner does not use it.
+Substantive variants select text from Item headings through SIGNATURES, with fallback for absent headings. Capped encoder variants average at most four 510-token windows in fp32 before balanced logistic regression. Full-document frozen variants retain all raw windows; these comparisons change preprocessing/pooling as well as the encoder. Original factory cross-validation remains available for direct fitting, but the shared runner does not use it.
 
 ### Common 1,000-row test
 
