@@ -1,0 +1,11 @@
+**
+!Dockerfile
+!pyproject.toml
+!uv.lock
+!app.py
+!decision_models/
+!decision_models/baselines.py
+!decision_models/schemas.py
+!decision_models/build_model.py
+!decision_models/data/
+!decision_models/data/filings-10k-splits.zip

@@ -9,5 +9,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build container image
-        run: docker build .
+      - name: Build model and API image
+        run: docker build --tag financial-triage .
+      - name: Verify container inference
+        run: |
+          docker run --detach --name triage --publish 127.0.0.1:8000:8000 financial-triage
+          curl --fail --retry 20 --retry-delay 1 --retry-all-errors --header 'Content-Type: application/json' --data '{"body":"The company entered a definitive merger agreement."}' http://localhost:8000/predict
