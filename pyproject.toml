@@ -20,14 +20,14 @@ models = [
     "edgartools==5.59.1",
 ]
 encoders = [
-    "torch",
-    "transformers",
+    "torch==2.14.0",
+    "transformers==5.17.0",
     "numpy",
 ]
 laya = [
     "laya==0.3.21",
     "peft==0.21.2",
-    "torch",
+    "torch==2.14.0",
 ]
 dev = [
     "pytest",
