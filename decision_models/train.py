@@ -1,4 +1,8 @@
-"""Train document attention heads or encoder adapters on train/validation; resume checkpoints."""
+"""Train document heads or LoRA; validation selects checkpoints, test is never read.
+
+Model/window details live in encoders.py. This file owns the training loop, frozen-feature
+cache and resumable state; one loss per whole document avoids inventing window labels.
+"""
 
 import argparse
 import hashlib
@@ -7,139 +11,24 @@ import os
 import random
 import subprocess
 import time
-import warnings
 from importlib.metadata import version
 from pathlib import Path
 
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 
-import laya
 import torch
-from laya.common import build_sequence
 from torch import nn
-from torch.nn.utils.rnn import pad_sequence
 
 from benchmark import Benchmark
-from schemas import annotation, load_split, replace_file, save as save_json
+from encoders import load_model
+from schemas import LABELS, annotation, load_split, replace_file, save as save_json
 
 
 HERE = Path(__file__).resolve().parent
 SEED = 42
 LEARNING_RATE = 1e-4
 DOCUMENT_BATCH = 8  # Accumulate gradients from eight complete documents.
-WINDOW_BATCH = 8  # Windows per forward pass; every window is retained.
 CHECKPOINT_STEPS = 25
-
-
-class DocumentModel(nn.Module):
-    def __init__(self, device="cuda", checkpoint=None, lora_rank=0):
-        super().__init__()
-        self.device = torch.device(device)
-        saved = torch.load(checkpoint, map_location="cpu", weights_only=True) if checkpoint else None
-        self.training_config = saved["config"] if saved else None
-        self.selected_epoch = saved["state"]["epoch"] if saved else None
-        config = self.training_config or {"model": Benchmark.laya_model, "revision": Benchmark.laya_revision}
-        self.model_id, self.revision = config["model"], config["revision"]
-        self.kind = "laya"
-        self.lora_rank = config.get("lora_rank", lora_rank)
-        warnings.filterwarnings("ignore", message=r"laya:.*invalid temperatures")
-        agent = laya.load(config["model"], device=device, revision=config["revision"], fast=False)
-        self.base, self.tokenizer, self.cfg = agent.model, agent.tok, agent.cfg
-        self.questions = config.get("questions", Benchmark.questions)
-        if tuple(self.questions["triage"]["criteria"]) != Benchmark.labels:
-            raise ValueError("Question options must follow the benchmark label order")
-        self.window_batch = config.get("window_batch", WINDOW_BATCH)
-        if self.training_config:
-            if config["labels"] != list(Benchmark.labels):
-                raise ValueError("Checkpoint label order differs from benchmark")
-            self.cfg.update(max_len=config["max_len"], head_max_len=config["head_max_len"])
-        for name, parameter in self.base.named_parameters():
-            parameter.requires_grad_(not name.startswith(("encoder.", "act_head.")))
-        if self.lora_rank:
-            from peft import LoraConfig, get_peft_model
-
-            self.base.encoder = get_peft_model(
-                self.base.encoder,
-                LoraConfig(
-                    r=self.lora_rank,
-                    lora_alpha=2 * self.lora_rank,
-                    lora_dropout=0.05,
-                    target_modules=["Wqkv"],
-                    bias="none",
-                ),
-            )
-            self.base.encoder.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
-        self.base.head_checkpointing = True
-        self.pool = nn.Sequential(nn.Linear(3, 16), nn.Tanh(), nn.Linear(16, 1, bias=False))
-        nn.init.zeros_(self.pool[-1].weight)  # Begin with uniform document pooling.
-        self.to(self.device)
-        if saved:
-            expected = {name for name, parameter in self.named_parameters() if parameter.requires_grad}
-            if set(saved["weights"]) != expected:
-                raise ValueError("Checkpoint does not match the trainable head/pooling parameters")
-            self.load_state_dict(saved["weights"], strict=False)
-
-    def train(self, mode=True):
-        super().train(mode)
-        if not self.lora_rank:
-            self.base.encoder.eval()  # Keep frozen encoder features deterministic.
-        self.base.act_head.eval()
-        return self
-
-    def windows(self, body):
-        question = self.questions["triage"]
-        q = {"t": "choice", "ins": question["instructions"], "crit": question["criteria"]}
-        tokens = self.tokenizer.encode(
-            body.replace(self.tokenizer.mask_token, " "), add_special_tokens=False, truncation=False, verbose=False
-        )
-        budget = self.cfg["max_len"] - self.cfg["head_max_len"] - 8
-        items = []
-        for start in range(0, max(1, len(tokens)), budget // 2):
-            chunk = tokens[start : start + budget]
-            ids, markers = build_sequence(
-                self.tokenizer, "", q, self.cfg["max_len"], self.cfg["head_max_len"], state_ids=chunk
-            )
-            if len(markers) != 3 or ids[-len(chunk) - 1 : -1] != chunk:
-                raise ValueError("Window formatting dropped input tokens or label markers")
-            items.append((ids, markers))
-            if start + budget >= len(tokens):
-                break
-        return items
-
-    def forward(self, items):
-        scores = []
-        with torch.autocast(self.device.type, dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
-            for start in range(0, len(items), self.window_batch):
-                chunk = items[start : start + self.window_batch]
-                sequences = [torch.tensor(ids, device=self.device) for ids, _ in chunk]
-                ids = pad_sequence(sequences, batch_first=True, padding_value=self.tokenizer.pad_token_id)
-                lengths = torch.tensor([len(seq) for seq in sequences], device=self.device)
-                mask = torch.arange(ids.shape[1], device=self.device)[None, :] < lengths[:, None]
-                markers = torch.tensor([positions for _, positions in chunk], device=self.device)
-                logits, _ = self.base(
-                    ids,
-                    mask,
-                    markers,
-                    torch.ones_like(markers, dtype=torch.bool),
-                    torch.zeros(len(chunk), dtype=torch.long, device=self.device),
-                    detach_encoder=not self.lora_rank,
-                )
-                scores.append(logits)
-            scores = torch.cat(scores)
-            # Gate on relative scores so arbitrary common logit offsets cannot affect attention.
-            attention = self.pool(scores.log_softmax(-1)).float().softmax(0)
-            return (attention * scores).sum(0), attention[:, 0]
-
-
-def load_model(device="cuda", checkpoint=None, kind="laya", adaptation="head", lora_rank=0):
-    if checkpoint:
-        config = torch.load(checkpoint, map_location="cpu", weights_only=True)["config"]
-        kind = config.get("kind", "laya")
-    if kind == "laya":
-        return DocumentModel(device, checkpoint, lora_rank)
-    from encoders import EncoderModel
-
-    return EncoderModel(device, kind, adaptation, lora_rank, checkpoint)
 
 
 def evaluate(model, items):
@@ -151,32 +40,15 @@ def evaluate(model, items):
             loss += nn.functional.cross_entropy(logits[None], torch.tensor([label], device=model.device)).item()
             rows.append(
                 {
-                    "reference": Benchmark.labels[label],
+                    "reference": LABELS[label],
                     "body_sha256": body_hash,
-                    "prediction": Benchmark.labels[logits.argmax().item()],
+                    "prediction": LABELS[logits.argmax().item()],
                     "probabilities": logits.softmax(-1).tolist(),
                 }
             )
             if index % 250 == 0:
                 print(f"Validation: {index}/{len(items)}", flush=True)
     return {"loss": loss / len(items), **Benchmark.scores(rows), "predictions": rows}
-
-
-def save_checkpoint(path, model, optimizer, state, config):
-    weights = {
-        name: parameter.detach().cpu() for name, parameter in model.named_parameters() if parameter.requires_grad
-    }
-    save_torch(
-        {
-            "weights": weights,
-            "optimizer": optimizer.state_dict(),
-            "state": state,
-            "config": config,
-            "rng": torch.get_rng_state(),
-            "cuda_rng": torch.cuda.get_rng_state_all() if model.device.type == "cuda" else [],
-        },
-        path,
-    )
 
 
 def save_torch(value, path):
@@ -188,7 +60,15 @@ def save_torch(value, path):
 def run(args):
     torch.manual_seed(SEED)
     torch.set_num_threads(4)
-    model = load_model(args.device, kind=args.model, adaptation=args.adaptation, lora_rank=args.lora_rank)
+    # Resume with the checkpoint's pinned model/task, not today's default prompt.
+    last = args.output / "last.pt"
+    model = load_model(
+        args.device,
+        checkpoint=last if args.resume else None,
+        kind=args.model,
+        adaptation=args.adaptation,
+        lora_rank=args.lora_rank,
+    )
     encoder_params, head_params = [], []
     for name, parameter in model.named_parameters():
         if parameter.requires_grad:
@@ -200,7 +80,7 @@ def run(args):
     optimizer = torch.optim.AdamW(groups if encoder_params else groups[:1], weight_decay=0.01)
     records = load_split(args.splits, "train")
     counts = torch.tensor(
-        [sum(annotation(row)["label"] == label for row in records) for label in Benchmark.labels], dtype=torch.float
+        [sum(annotation(row)["label"] == label for row in records) for label in LABELS], dtype=torch.float
     )
     if (counts == 0).any():
         raise ValueError("Training requires examples of all three labels")
@@ -218,7 +98,7 @@ def run(args):
         "limit": args.limit,
         "learning_rate": args.learning_rate,
         "document_batch": DOCUMENT_BATCH,
-        "window_batch": WINDOW_BATCH,
+        "window_batch": model.window_batch,
         "lora_rank": args.lora_rank,
         "class_weight_power": args.class_weight_power,
         "encoder_learning_rate": args.encoder_learning_rate or args.learning_rate,
@@ -234,12 +114,12 @@ def run(args):
         "objective": "class-weighted document-level cross-entropy",
         "precision": "bf16 CUDA / fp32 CPU",
         "split_manifest": manifest,
-        "labels": list(Benchmark.labels),
-        "questions": Benchmark.questions if args.model == "laya" else {},
+        "labels": list(LABELS),
+        "questions": model.questions if args.model == "laya" else {},
         "versions": {name: version(name) for name in ("laya", "torch", "transformers", "peft")},
         "source_sha256": {
             name: hashlib.sha256((HERE / name).read_bytes()).hexdigest()
-            for name in ("train.py", "benchmark.py", "schemas.py", "label.py", "encoders.py", "tune.py")
+            for name in ("train.py", "benchmark.py", "schemas.py", "label.py", "encoders.py", "tune.py", "baselines.py")
         },
         "git_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=HERE, text=True).strip(),
         "device": args.device,
@@ -247,7 +127,6 @@ def run(args):
         "trainable_parameters": sum(p.numel() for p in model.parameters() if p.requires_grad),
     }
     args.output.mkdir(parents=True, exist_ok=True)
-    last = args.output / "last.pt"
     state = {
         "epoch": 0,
         "offset": 0,
@@ -304,7 +183,7 @@ def run(args):
         items = [
             (
                 model.windows(row["body"]),
-                Benchmark.labels.index(annotation(row)["label"]),
+                LABELS.index(annotation(row)["label"]),
                 hashlib.sha256(row["body"].encode()).hexdigest(),
             )
             for row in records
@@ -345,7 +224,18 @@ def run(args):
         state["seconds"] = previous_seconds + time.perf_counter() - started
         peak = torch.cuda.max_memory_allocated() if args.device == "cuda" else 0
         state["peak_vram_bytes"] = max(state.get("peak_vram_bytes", 0), peak)
-        save_checkpoint(path, model, optimizer, state, config)
+        # Save only adapted weights, plus everything needed to resume the next document batch.
+        save_torch(
+            {
+                "weights": {n: p.detach().cpu() for n, p in model.named_parameters() if p.requires_grad},
+                "optimizer": optimizer.state_dict(),
+                "state": state,
+                "config": config,
+                "rng": torch.get_rng_state(),
+                "cuda_rng": torch.cuda.get_rng_state_all() if args.device == "cuda" else [],
+            },
+            path,
+        )
         save_json(state, args.output / "history.json")
 
     def selection_score(result):

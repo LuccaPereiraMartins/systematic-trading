@@ -18,7 +18,7 @@ def build_model():
     if hashlib.sha256(content).hexdigest() != manifest["splits"]["train"]["sha256"]:
         raise ValueError("Training split checksum mismatch")
     rows = [json.loads(line) for line in content.decode("utf-8").splitlines()]
-    model = make("tfidf_balanced")
+    model = make("tfidf", class_weight="balanced", max_iter=1000)
     with threadpool_limits(limits=4):
         model.fit([row["body"] for row in rows], [annotation(row)["label"] for row in rows])
     API_MODEL.parent.mkdir(parents=True, exist_ok=True)

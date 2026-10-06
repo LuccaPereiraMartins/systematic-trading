@@ -1,4 +1,4 @@
-"""Shared dataset and model-output schemas."""
+"""Shared data schemas, labels and Laya task settings."""
 
 from typing import Literal, get_args
 import hashlib
@@ -11,6 +11,22 @@ from pydantic import BaseModel
 
 LabelName = Literal["routine", "review_worthy", "unclear"]
 LABELS = get_args(LabelName)
+
+# One pinned model and task definition for base inference and supervised adaptation.
+LAYA_MODEL = "convaiinnovations/laya"
+LAYA_REVISION = "55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851"
+LAYA_QUESTIONS = {
+    "triage": {
+        "type": "choice",
+        "instructions": "Classify this financial document for whether an investment analyst should spend time reviewing it.",
+        "criteria": {
+            "routine": "Ordinary update with no apparent development requiring closer review.",
+            "review_worthy": "A potentially significant development that merits closer review.",
+            "unclear": "Insufficient or conflicting information to decide.",
+        },
+    }
+}
+
 Uncertainty = Literal[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 
 

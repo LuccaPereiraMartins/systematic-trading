@@ -10,7 +10,18 @@ import warnings
 from pathlib import Path
 
 from label import RUBRIC
-from schemas import LABELS, SPLITS, LabelOutput, annotation, body_hash, load_split, save as save_json
+from schemas import (
+    LABELS,
+    LAYA_MODEL,
+    LAYA_REVISION,
+    LAYA_QUESTIONS,
+    SPLITS,
+    LabelOutput,
+    annotation,
+    body_hash,
+    load_split,
+    save as save_json,
+)
 
 
 HERE = Path(__file__).resolve().parent
@@ -51,24 +62,18 @@ class SavedModel:
             if all(member.device == "cpu" for member in self.model):
                 self.device = "cpu"
         elif self.linear:
-            if self.config["kind"] in ("tfidf", "char") or (
-                self.config["family"] == "baseline"
-                and self.config["kind"] not in ("finbert_capped", "bge_capped", "matt_finbert_lr", "matt_bge_lr")
-            ):
+            if self.config["kind"] not in ("finbert", "bge"):
                 self.device = "cpu"
             import joblib
 
             self.model = joblib.load(directory / "model.joblib")
             self.order = [list(self.model.classes_).index(label) for label in Benchmark.labels]
-            for step in getattr(self.model, "named_steps", {}).values():
-                if hasattr(step, "device"):
-                    step.device = device
             if self.config["kind"] in ("finbert", "bge"):
                 from encoders import EncoderModel
 
                 self.encoder = EncoderModel(device, config=self.config).eval()
         else:
-            from train import load_model
+            from encoders import load_model
 
             self.model = load_model(device, checkpoint=directory / "best.pt").eval()
         self.offsets = np.array(self.decision["offsets"])
@@ -91,8 +96,7 @@ class SavedModel:
                 logits, _ = self.model(self.model.windows(body))
                 return logits.softmax(-1).cpu().numpy()
             if self.encoder:
-                vector = self.encoder.features(self.encoder.windows(body)).mean(0)
-                inputs = torch.nn.functional.normalize(vector, dim=0).cpu().numpy()[None]
+                inputs = self.encoder.embed(body).cpu().numpy()[None]
             else:
                 inputs = [body]
             return self.model.predict_proba(inputs)[0, self.order]
@@ -108,19 +112,9 @@ class Benchmark:
     concurrency = 4
     service_tier = "flex"
     reasoning_effort = "low"
-    laya_model = "convaiinnovations/laya"
-    laya_revision = "55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851"
-    questions = {
-        "triage": {
-            "type": "choice",
-            "instructions": "Classify this 8-K for whether an investment analyst should spend time reviewing it.",
-            "criteria": {
-                "routine": "Ordinary update with no apparent development requiring closer review.",
-                "review_worthy": "A potentially significant development that merits closer review.",
-                "unclear": "Insufficient or conflicting information to decide.",
-            },
-        }
-    }
+    laya_model = LAYA_MODEL
+    laya_revision = LAYA_REVISION
+    questions = LAYA_QUESTIONS
 
     def __init__(self, device=None, splits=SPLITS):
         self.device = device
@@ -324,12 +318,7 @@ class Benchmark:
         model = SavedModel(directory, self.device or "cuda")
         if self.split_manifest != model.config["split_manifest"]:
             raise ValueError("Saved model and benchmark use different splits")
-        # Preserve old checkpoint metadata while using the current approach names.
-        name = {
-            "matt_tfidf": "tfidf_balanced",
-            "matt_bge_lr": "bge_capped",
-            "matt_finbert_lr": "finbert_capped",
-        }.get(directory.name, directory.name.removeprefix("matt_"))
+        name = directory.name
         self.start(
             name,
             model=name,
