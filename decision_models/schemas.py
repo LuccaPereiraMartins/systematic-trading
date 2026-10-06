@@ -46,6 +46,7 @@ def load_split(directory, name):
 HERE = Path(__file__).resolve().parent
 DATASET = HERE / "data/dataset.json"
 SPLITS = HERE / "data/splits"
+API_MODEL = HERE / "data/api_model.joblib"
 
 
 def annotation(record):
