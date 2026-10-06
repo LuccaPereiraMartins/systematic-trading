@@ -1,34 +1,7 @@
-"""Baselines for 8-K triage, from trivial to fine-tuned encoders.
+"""Matt's majority, length, keyword, TF-IDF and capped/cleaned encoder baselines.
 
-Every approach is an sklearn-style estimator: ``fit(texts, labels)`` / ``predict(texts)``, built by ``make(name)``.
-
-How the simple baselines were chosen
-------------------------------------
-Substantive text. 8-Ks open with a cover page and end with a signature block, and most of the middle is boilerplate
-that says nothing about the event. ``substantive_text`` keeps what lies between the first "Item X.XX" heading and
-"SIGNATURES" (falling back to the whole body when there is no heading, 13/500 filings). Every text-based baseline
-uses it, as does the length baseline when ``measure="substantive"``.
-
-Length. On the 500 labelled filings the review-worthy share rises monotonically with length, from about 0.55 in the
-shortest octile to about 0.9 in the longest, and every ``unclear`` filing is short. A monotone relationship needs one
-threshold, so the model is a single cut on log length: shorter is ``routine``, longer is ``review_worthy``, and the
-cut is the training-set value (searched over the 5th to 95th percentiles) that maximises macro F1. A first attempt,
-a Gini stump with balanced class weights, spent its one split isolating the rare short ``unclear`` class and
-scored below the majority baseline, so the direction is fixed by the observation above instead of left to the tree.
-Raw and substantive length are both offered; cross-validation, not intuition, says which is better.
-
-Keywords. Two variants, deliberately different in where the words come from:
-* ``keyword_prior``: a hand-written lexicon of terms that signal a material 8-K event (M&A, financing, distress,
-  officer departures, restatements, litigation, regulatory outcomes) and a short one for routine housekeeping
-  (Reg FD furnishings, annual meeting votes, routine distributions). It was written from domain knowledge, before
-  any label-word statistics were computed. The only fitted parameters are the 3 weights of a logistic regression on
-  the two distinct-term counts (distinct terms, not occurrences, so long filings are not rewarded twice).
-* ``keyword_learned``: binary uni/bi-gram presence, the top-k terms by chi-squared against the label, then
-  logistic regression. k is chosen by 3-fold inner cross-validation (macro F1) from a small grid, never on the
-  evaluation fold. Comparing it to the prior lexicon shows how much a data-driven vocabulary adds.
-
-None of the cheap baselines can tell why a filing is review-worthy; they set the floor a learned or LLM model must
-clear to justify its cost.
+Factories provide sklearn estimators. tune.py selects parameters on our frozen validation
+split; evaluate.py runs the common held-out test. Historical trials are in experiments.md.
 """
 
 import hashlib
@@ -58,6 +31,10 @@ def substantive_text(body):
     return body[start : end.start() if end else len(body)]
 
 
+def substantive_texts(texts):
+    return [substantive_text(text) for text in texts]
+
+
 def registrant(body):
     """Best-effort company name, used to keep a company's filings in one CV fold. Falls back to a body hash."""
     marker = REGISTRANT_MARKER.search(body)
@@ -70,19 +47,76 @@ def registrant(body):
 
 
 MATERIAL_TERMS = (
-    "merger", "acquisition", "acquire", "business combination", "definitive agreement", "tender offer",
-    "spin-off", "divest", "sale of substantially all", "joint venture", "license agreement", "collaboration",
-    "credit agreement", "indenture", "senior notes", "convertible", "private placement", "public offering",
-    "underwriting agreement", "default", "acceleration", "bankruptcy", "chapter 11", "going concern", "covenant",
-    "delist", "deficiency", "forbearance", "waiver", "resign", "terminat", "dismiss", "removal", "departure",
-    "interim chief", "restat", "non-reliance", "material weakness", "impairment", "investigation", "subpoena",
-    "lawsuit", "litigation", "settlement", "complaint", "guidance", "preliminary results", "net loss",
-    "share repurchase", "stock split", "reverse stock split", "fda", "clinical trial", "complete response",
-    "recall", "cyber", "data breach",
+    "merger",
+    "acquisition",
+    "acquire",
+    "business combination",
+    "definitive agreement",
+    "tender offer",
+    "spin-off",
+    "divest",
+    "sale of substantially all",
+    "joint venture",
+    "license agreement",
+    "collaboration",
+    "credit agreement",
+    "indenture",
+    "senior notes",
+    "convertible",
+    "private placement",
+    "public offering",
+    "underwriting agreement",
+    "default",
+    "acceleration",
+    "bankruptcy",
+    "chapter 11",
+    "going concern",
+    "covenant",
+    "delist",
+    "deficiency",
+    "forbearance",
+    "waiver",
+    "resign",
+    "terminat",
+    "dismiss",
+    "removal",
+    "departure",
+    "interim chief",
+    "restat",
+    "non-reliance",
+    "material weakness",
+    "impairment",
+    "investigation",
+    "subpoena",
+    "lawsuit",
+    "litigation",
+    "settlement",
+    "complaint",
+    "guidance",
+    "preliminary results",
+    "net loss",
+    "share repurchase",
+    "stock split",
+    "reverse stock split",
+    "fda",
+    "clinical trial",
+    "complete response",
+    "recall",
+    "cyber",
+    "data breach",
 )
 ROUTINE_TERMS = (
-    "regulation fd", "investor presentation", "furnished", "annual meeting", "submission of matters",
-    "results of the vote", "bylaws", "regular quarterly", "distribution", "press release", "conference call",
+    "regulation fd",
+    "investor presentation",
+    "furnished",
+    "annual meeting",
+    "submission of matters",
+    "results of the vote",
+    "bylaws",
+    "regular quarterly",
+    "distribution",
+    "press release",
+    "conference call",
     "webcast",
 )
 
@@ -122,6 +156,9 @@ class LengthThreshold(ClassifierMixin, BaseEstimator):
 
     def predict(self, X):
         return np.where(np.ravel(X) < self.threshold_, self.short_label, self.long_label)
+
+    def predict_proba(self, X):
+        return (self.predict(X)[:, None] == self.classes_[None, :]).astype(float)
 
 
 class LexiconCounts(BaseEstimator, TransformerMixin):
@@ -169,9 +206,14 @@ def best_device():
 def load_encoder(model_name, device):
     from transformers import AutoModel, AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    from encoders import MODELS
+
+    revision = next(pin for name, pin in MODELS.values() if name == model_name)
+    torch = __import__("torch")
+    torch.set_num_threads(4)
+    tokenizer = AutoTokenizer.from_pretrained(model_name, revision=revision)
     tokenizer.model_max_length = 10**6  # we window by hand; silence the length warning
-    return tokenizer, AutoModel.from_pretrained(model_name).to(device).eval()
+    return tokenizer, AutoModel.from_pretrained(model_name, revision=revision).to(device).eval()
 
 
 _EMBEDDINGS = {}
@@ -184,12 +226,15 @@ class Embedder(BaseEstimator, TransformerMixin):
     timing inference.
     """
 
-    def __init__(self, model_name="BAAI/bge-small-en-v1.5", pooling="cls", max_chunks=4, window=510, cache=False):
+    def __init__(
+        self, model_name="BAAI/bge-small-en-v1.5", pooling="cls", max_chunks=4, window=510, cache=False, device=None
+    ):
         self.model_name = model_name
         self.pooling = pooling
         self.max_chunks = max_chunks
         self.window = window
         self.cache = cache
+        self.device = device
 
     def fit(self, X, y=None):
         return self
@@ -197,7 +242,7 @@ class Embedder(BaseEstimator, TransformerMixin):
     def embed(self, text):
         import torch
 
-        device = best_device()
+        device = self.device or best_device()
         tokenizer, model = load_encoder(self.model_name, device)
         ids = tokenizer(substantive_text(text), add_special_tokens=False)["input_ids"]
         windows = [ids[i : i + self.window] for i in range(0, max(len(ids), 1), self.window)][: self.max_chunks]
@@ -221,7 +266,14 @@ class Embedder(BaseEstimator, TransformerMixin):
     def transform(self, X):
         vectors = []
         for text in X:
-            key = (self.model_name, self.max_chunks, hashlib.sha256(text.encode()).hexdigest())
+            key = (
+                self.model_name,
+                self.pooling,
+                self.window,
+                self.max_chunks,
+                self.device or best_device(),
+                hashlib.sha256(text.encode()).hexdigest(),
+            )
             if self.cache and key in _EMBEDDINGS:
                 vectors.append(_EMBEDDINGS[key])
                 continue
@@ -232,86 +284,11 @@ class Embedder(BaseEstimator, TransformerMixin):
         return np.vstack(vectors)
 
 
-class FineTunedEncoder(ClassifierMixin, BaseEstimator):
-    """End-to-end fine-tune of an encoder (default FinBERT) on the first ``max_length`` substantive tokens.
-
-    Each ``fit`` starts again from the pretrained weights. Class-weighted cross-entropy handles the 69% / 27% / 5%
-    class imbalance. This is the like-for-like comparison for SFT on Laya: same data, same labels, a small model.
-    """
-
-    def __init__(self, model_name="ProsusAI/finbert", max_length=512, epochs=3, lr=2e-5, batch_size=8, seed=0):
-        self.model_name = model_name
-        self.max_length = max_length
-        self.epochs = epochs
-        self.lr = lr
-        self.batch_size = batch_size
-        self.seed = seed
-
-    def encode(self, tokenizer, texts, device):
-        batch = tokenizer(
-            [substantive_text(text) for text in texts],
-            truncation=True,
-            max_length=self.max_length,
-            padding=True,
-            return_tensors="pt",
-        )
-        return batch.to(device)
-
-    def fit(self, X, y):
-        import torch
-        from transformers import AutoModelForSequenceClassification, AutoTokenizer, get_linear_schedule_with_warmup
-
-        torch.manual_seed(self.seed)
-        rng = np.random.default_rng(self.seed)
-        self.classes_ = np.array(sorted(set(y)))
-        targets = np.searchsorted(self.classes_, y)
-        device = best_device()
-        self.device_ = device
-        self.tokenizer_ = AutoTokenizer.from_pretrained(self.model_name)
-        self.model_ = AutoModelForSequenceClassification.from_pretrained(
-            self.model_name, num_labels=len(self.classes_), ignore_mismatched_sizes=True
-        ).to(device)
-        counts = np.bincount(targets, minlength=len(self.classes_))
-        weights = torch.tensor(len(targets) / (len(self.classes_) * np.maximum(counts, 1)), dtype=torch.float, device=device)
-        optimizer = torch.optim.AdamW(self.model_.parameters(), lr=self.lr, weight_decay=0.01)
-        steps = self.epochs * -(-len(X) // self.batch_size)
-        schedule = get_linear_schedule_with_warmup(optimizer, int(0.1 * steps), steps)
-        self.model_.train()
-        for _ in range(self.epochs):
-            order = rng.permutation(len(X))
-            for start in range(0, len(order), self.batch_size):
-                index = order[start : start + self.batch_size]
-                batch = self.encode(self.tokenizer_, [X[i] for i in index], device)
-                logits = self.model_(**batch).logits
-                loss = torch.nn.functional.cross_entropy(
-                    logits, torch.tensor(targets[index], device=device), weight=weights
-                )
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model_.parameters(), 1.0)
-                optimizer.step()
-                schedule.step()
-                optimizer.zero_grad()
-        self.model_.eval()
-        return self
-
-    def predict(self, X):
-        import torch
-
-        predictions = []
-        with torch.no_grad():
-            for start in range(0, len(X), self.batch_size):
-                batch = self.encode(self.tokenizer_, list(X[start : start + self.batch_size]), self.device_)
-                predictions.extend(self.model_(**batch).logits.argmax(-1).cpu().tolist())
-        return self.classes_[predictions]
-
-
 def embedding_pipeline(model_name, pooling, cache):
     return make_pipeline(
         Embedder(model_name, pooling, cache=cache),
         StandardScaler(),
-        inner_search(
-            LogisticRegression(max_iter=2000, class_weight="balanced"), {"C": [0.001, 0.01, 0.1, 1.0, 10.0]}
-        ),
+        inner_search(LogisticRegression(max_iter=2000, class_weight="balanced"), {"C": [0.001, 0.01, 0.1, 1.0, 10.0]}),
     )
 
 
@@ -333,7 +310,7 @@ APPROACHES = {
     "keyword_learned": (
         "Top-k chi2 uni/bi-grams (k by inner CV) -> logistic regression",
         lambda cache: make_pipeline(
-            FunctionTransformer(lambda texts: [substantive_text(t) for t in texts]),
+            FunctionTransformer(substantive_texts),
             CountVectorizer(binary=True, ngram_range=(1, 2), min_df=3, stop_words="english"),
             inner_search(
                 make_pipeline(SelectKBest(chi2), LogisticRegression(max_iter=1000, class_weight="balanced")),
@@ -355,10 +332,6 @@ APPROACHES = {
     "finbert_lr": (
         "Frozen ProsusAI/finbert window embeddings + logistic regression",
         lambda cache: embedding_pipeline("ProsusAI/finbert", "mean", cache),
-    ),
-    "finbert_ft": (
-        "ProsusAI/finbert fine-tuned end to end (3 epochs, class-weighted)",
-        lambda cache: FineTunedEncoder(),
     ),
 }
 

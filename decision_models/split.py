@@ -13,8 +13,7 @@ from sklearn.model_selection import train_test_split
 HERE = Path(__file__).resolve().parent
 
 
-def split_dataset(dataset=HERE / "data/dataset.json", output=HERE / "data/splits",
-                  pilot=HERE / "dataset.json"):
+def split_dataset(dataset=HERE / "data/dataset.json", output=HERE / "data/splits", pilot=HERE / "data/splits/pilot.json"):
     source = dataset.read_bytes()
     records = [FilingRecord.model_validate(row).model_dump() for row in json.loads(source)]
 
@@ -54,7 +53,9 @@ def split_dataset(dataset=HERE / "data/dataset.json", output=HERE / "data/splits
         content = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows).encode()
         files[f"{name}.jsonl"] = content
         manifest["splits"][name] = {
-            "count": len(rows), "start": rows[0]["date"], "end": rows[-1]["date"],
+            "count": len(rows),
+            "start": rows[0]["date"],
+            "end": rows[-1]["date"],
             "sha256": hashlib.sha256(content).hexdigest(),
         }
     files["manifest.json"] = (json.dumps(manifest, indent=2) + "\n").encode()
@@ -74,6 +75,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", type=Path, default=HERE / "data/dataset.json")
     parser.add_argument("--output", type=Path, default=HERE / "data/splits")
-    parser.add_argument("--pilot", type=Path, default=HERE / "dataset.json")
+    parser.add_argument("--pilot", type=Path, default=HERE / "data/splits/pilot.json")
     args = parser.parse_args()
     split_dataset(args.dataset, args.output, args.pilot)

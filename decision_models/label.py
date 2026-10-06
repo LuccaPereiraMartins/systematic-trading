@@ -2,16 +2,14 @@
 
 import argparse
 import json
-import time
 import asyncio
 from pathlib import Path
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI, RateLimitError
-from schemas import FilingRecord, LabelOutput
+from schemas import DATASET, FilingRecord, LabelOutput, annotation, save
 
 
-DATASET = Path(__file__).with_name("dataset.json")
 MODEL = "gpt-6-luna"
 CONCURRENCY = 4
 CHECKPOINT_EVERY = 250
@@ -22,21 +20,6 @@ review_worthy: a potentially significant development that merits closer review.
 unclear: insufficient or conflicting information to decide.
 Uncertainty is your uncertainty about this label: 0.0 means certain, 1.0 means very uncertain.
 Use only increments of 0.1. Judge the supplied text alone. Return only label and uncertainty."""
-def annotation(record):
-    return record["human"] if record["human"]["label"] is not None else record["llm"]
-
-
-def save(records, dataset=DATASET):
-    temporary = dataset.with_suffix(".tmp")
-    temporary.write_text(json.dumps(records, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    for attempt in range(5):
-        try:
-            temporary.replace(dataset)
-            return
-        except PermissionError:
-            if attempt == 4:
-                raise
-            time.sleep(1)
 
 
 async def label_document(client, body):
@@ -60,8 +43,9 @@ async def label_document(client, body):
 
 async def label_dataset(dataset=DATASET):
     load_dotenv(Path(__file__).resolve().parents[1] / ".env")
-    records = [FilingRecord.model_validate(record).model_dump() for record in
-               json.loads(dataset.read_text(encoding="utf-8"))]
+    records = [
+        FilingRecord.model_validate(record).model_dump() for record in json.loads(dataset.read_text(encoding="utf-8"))
+    ]
     pending = [i for i, record in enumerate(records) if annotation(record)["label"] is None]
     if not pending:
         print("No unlabeled records")

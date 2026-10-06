@@ -3,6 +3,8 @@
 from typing import Literal, get_args
 import hashlib
 import json
+import time
+from pathlib import Path
 
 from pydantic import BaseModel
 
@@ -39,3 +41,35 @@ def load_split(directory, name):
     if len(rows) != expected["count"]:
         raise ValueError(f"Split count mismatch: {name}")
     return rows
+
+
+HERE = Path(__file__).resolve().parent
+DATASET = HERE / "data/dataset.json"
+SPLITS = HERE / "data/splits"
+
+
+def annotation(record):
+    return record["human"] if record["human"]["label"] is not None else record["llm"]
+
+
+def body_hash(record):
+    return hashlib.sha256(record["body"].encode()).hexdigest()
+
+
+def replace_file(temporary, destination):
+    """Atomic replacement, with brief retries for OneDrive file locks."""
+    for attempt in range(5):
+        try:
+            temporary.replace(destination)
+            return
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(1)
+
+
+def save(value, path=DATASET):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    replace_file(temporary, path)

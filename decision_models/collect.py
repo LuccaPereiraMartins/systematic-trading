@@ -6,34 +6,19 @@ import hashlib
 import json
 import os
 import re
-import time
 from datetime import date
 from itertools import zip_longest
 from pathlib import Path
 
 from dotenv import load_dotenv
+from schemas import DATASET, save
 
 
-DATASET = Path(__file__).with_name("dataset.json")
 RATE = 10
 
 
 def key(record):
     return record["date"], re.sub(r"\s+", " ", record["body"]).strip().casefold()
-
-
-def save(records, output=DATASET):
-    output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output.with_suffix(".tmp")
-    temporary.write_text(json.dumps(records, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    for attempt in range(5):
-        try:
-            temporary.replace(output)
-            return
-        except PermissionError:
-            if attempt == 4:
-                raise
-            time.sleep(1)
 
 
 def latest_filings(number, start, end, sample=False):
@@ -45,14 +30,20 @@ def latest_filings(number, start, end, sample=False):
         raise ValueError("Set SEC_USER_AGENT in the root .env file")
     set_identity(agent)
     filing_date = f"{start}:{end}" if start else None
-    filings = get_filings(form="8-K", amendments=False, filing_date=filing_date) if filing_date else get_filings(form="8-K", amendments=False)
+    filings = (
+        get_filings(form="8-K", amendments=False, filing_date=filing_date)
+        if filing_date
+        else get_filings(form="8-K", amendments=False)
+    )
     if sample:
         months = {}
         for filing in filings:
             months.setdefault(str(filing.filing_date)[:7], []).append(filing)
         # Hash ordering gives a repeatable selection without favoring companies or dates.
-        groups = [sorted(months[month], key=lambda filing: hashlib.sha256(
-            filing.accession_number.encode()).hexdigest()) for month in sorted(months)]
+        groups = [
+            sorted(months[month], key=lambda filing: hashlib.sha256(filing.accession_number.encode()).hexdigest())
+            for month in sorted(months)
+        ]
         return [filing for row in zip_longest(*groups) for filing in row if filing is not None]
     if number is None:
         return list(filings)
@@ -80,9 +71,12 @@ async def collect_text(filings, records, output=DATASET):
             failed += 1
             print(f"Filing failed: {filing.accession_number}: {error or 'no readable text'}")
             continue
-        record = {"date": str(filing.filing_date), "body": body,
-                  "llm": {"label": None, "uncertainty": None},
-                  "human": {"label": None, "uncertainty": None}}
+        record = {
+            "date": str(filing.filing_date),
+            "body": body,
+            "llm": {"label": None, "uncertainty": None},
+            "human": {"label": None, "uncertainty": None},
+        }
         if key(record) not in seen:
             records.append(record)
             seen.add(key(record))
@@ -124,7 +118,7 @@ def collect_8ks(number=None, start=None, end=None, sample=False, output=DATASET)
         remaining = number - len(records)
         if remaining <= 0:
             break
-        batch = filings[offset:offset + min(1000, remaining)]
+        batch = filings[offset : offset + min(1000, remaining)]
         asyncio.run(collect_text(batch, records, output))
     if len(records) < number:
         raise RuntimeError(f"Only collected {len(records)}/{number}; rerun to retry")
@@ -136,6 +130,8 @@ if __name__ == "__main__":
     parser.add_argument("--number", type=int)
     parser.add_argument("--start", help="Inclusive YYYY-MM-DD")
     parser.add_argument("--end", help="Inclusive YYYY-MM-DD")
-    parser.add_argument("--sample", action="store_true", help="Sample evenly across months; number is the target dataset size")
+    parser.add_argument(
+        "--sample", action="store_true", help="Sample evenly across months; number is the target dataset size"
+    )
     parser.add_argument("--output", type=Path, default=DATASET)
     collect_8ks(**vars(parser.parse_args()))

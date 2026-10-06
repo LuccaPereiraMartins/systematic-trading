@@ -34,9 +34,17 @@ class EncoderModel(nn.Module):
         self.encoder.requires_grad_(False)
         if self.adaptation == "lora":
             from peft import LoraConfig, get_peft_model
-            self.encoder = get_peft_model(self.encoder, LoraConfig(
-                r=self.lora_rank, lora_alpha=2*self.lora_rank, lora_dropout=0.05,
-                target_modules=["query", "value"], bias="none"))
+
+            self.encoder = get_peft_model(
+                self.encoder,
+                LoraConfig(
+                    r=self.lora_rank,
+                    lora_alpha=2 * self.lora_rank,
+                    lora_dropout=0.05,
+                    target_modules=["query", "value"],
+                    bias="none",
+                ),
+            )
         if self.adaptation != "head":
             self.encoder.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
         width = self.encoder.config.hidden_size
@@ -62,14 +70,16 @@ class EncoderModel(nn.Module):
         ids = self.tokenizer.encode(body, add_special_tokens=False, truncation=False, verbose=False)
         # Keep every raw token. No 8-K trimming and no four-window cap from the pilot.
         budget = self.cfg["max_len"] - 2
-        return [[self.tokenizer.cls_token_id, *ids[i:i+budget], self.tokenizer.sep_token_id]
-                for i in range(0, max(1, len(ids)), budget)]
+        return [
+            [self.tokenizer.cls_token_id, *ids[i : i + budget], self.tokenizer.sep_token_id]
+            for i in range(0, max(1, len(ids)), budget)
+        ]
 
     def features(self, items):
         vectors = []
         with torch.autocast(self.device.type, dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
             for start in range(0, len(items), self.window_batch):
-                rows = [torch.tensor(ids, device=self.device) for ids in items[start:start+self.window_batch]]
+                rows = [torch.tensor(ids, device=self.device) for ids in items[start : start + self.window_batch]]
                 ids = pad_sequence(rows, batch_first=True, padding_value=self.tokenizer.pad_token_id)
                 mask = ids != self.tokenizer.pad_token_id
                 hidden = self.encoder(input_ids=ids, attention_mask=mask).last_hidden_state
