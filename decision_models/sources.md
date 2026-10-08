@@ -43,3 +43,8 @@ text was available verbatim on its stated publication date. Pretrained-model exp
 
 Collection and the independent human audit remain unfinished. Dataset-size targets are ceilings, and source
 shortfalls will be recorded explicitly before model comparisons.
+
+The first complete news pass retained 83 Wikinews articles dated Jan 2019–Apr 2026, with no eligible VOA
+articles. A broader pass through two levels of financial/business subcategories is running before the news
+source is declared exhausted. The completed Fed corpus has 1,826 documents; ECB has 722. Data-PR CI lint,
+container build and container inference passed despite the unavailable local Docker daemon.

@@ -56,7 +56,7 @@ class HTTP:
         if raw.exists() and meta.exists():
             return raw.read_bytes(), json.loads(meta.read_text(encoding="utf-8"))
         for attempt in range(4):
-            time.sleep(max(0, self.last + (0.13 if urlparse(url).netloc.endswith("sec.gov") else 0.4) - time.monotonic()))
+            time.sleep(max(0, self.last + (0.26 if urlparse(url).netloc.endswith("sec.gov") else 0.4) - time.monotonic()))
             self.last = time.monotonic()
             try:
                 response = self.session.get(url, timeout=45)
@@ -96,7 +96,6 @@ def balanced(items):
 def sec_candidates(family, start, end):
     from edgar import get_filings, set_identity
     set_identity(os.environ["SEC_USER_AGENT"])
-    os.environ["EDGAR_RATE_LIMIT_PER_SEC"] = "8"
     form = "6-K" if family == "6k" else "8-K"
     filings = get_filings(year=list(range(int(start[:4]), int(end[:4]) + 1)), quarter=[1, 2, 3, 4],
                           form=form, amendments=False, filing_date=f"{start}:{end}")
@@ -152,18 +151,28 @@ def ecb_candidates(http, start, end):
 
 def wikinews_candidates(http, start, end):
     root = "https://en.wikinews.org/w/api.php?format=json&action=query&list=categorymembers"
-    continuation, items = "", []
-    while True:
-        query = root + "&cmtitle=Category%3AEconomy_and_business&cmnamespace=0&cmlimit=500" + continuation
-        result = http.json(query)
-        for row in result["query"]["categorymembers"]:
-            url = "https://en.wikinews.org/wiki/" + requests.utils.quote(row["title"].replace(" ", "_"))
-            items.append({"document_id": f"wikinews:{row['pageid']}", "url": url,
-                          "source": "wikinews", "document_type": "news", "date": ""})
-        if "continue" not in result:
-            break
-        continuation = "&cmcontinue=" + requests.utils.quote(result["continue"]["cmcontinue"])
-    return items
+    categories, visited, items = [("Category:Economy_and_business", 0)], set(), {}
+    for category, depth in categories:
+        if category in visited:
+            continue
+        visited.add(category)
+        continuation = ""
+        while True:
+            query = root + "&cmtitle=" + requests.utils.quote(category) + "&cmnamespace=0%7C14&cmlimit=500" + continuation
+            result = http.json(query)
+            for row in result["query"]["categorymembers"]:
+                if row["ns"] == 14:
+                    if depth < 2:
+                        categories.append((row["title"], depth + 1))
+                    continue
+                url = "https://en.wikinews.org/wiki/" + requests.utils.quote(row["title"].replace(" ", "_"))
+                items.setdefault(row["pageid"], {"document_id": f"wikinews:{row['pageid']}", "url": url,
+                                 "source": "wikinews", "document_type": "news", "date": "",
+                                 "discovery_category": category})
+            if "continue" not in result:
+                break
+            continuation = "&cmcontinue=" + requests.utils.quote(result["continue"]["cmcontinue"])
+    return list(items.values())
 
 
 def news_candidates(http, start, end):
@@ -278,6 +287,9 @@ def collect(family, number, start, end, output):
     load_dotenv(HERE.parent / ".env")
     if not os.getenv("SEC_USER_AGENT"):
         raise ValueError("Set SEC_USER_AGENT; also used as the contact for public-source requests")
+    if family in ("8k", "releases", "6k"):
+        # SDK metadata plus direct text requests remain below SEC's combined ten-request limit.
+        os.environ["EDGAR_RATE_LIMIT_PER_SEC"] = "4"
     if not 0 < number <= 100_000 or start > end:
         raise ValueError("Invalid collection target or dates")
     datetime.strptime(start, "%Y-%m-%d")
