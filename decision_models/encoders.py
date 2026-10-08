@@ -228,4 +228,7 @@ def load_model(device="cuda", checkpoint=None, kind="laya", adaptation="head", l
         kind = config.get("kind", "laya")
     if kind == "laya":
         return DocumentModel(device, checkpoint, lora_rank, config)
+    if kind in ("qwen17", "qwen4"):
+        from causal import CausalModel
+        return CausalModel(device, kind, adaptation, lora_rank, checkpoint, config)
     return EncoderModel(device, kind, adaptation, lora_rank, checkpoint, config)

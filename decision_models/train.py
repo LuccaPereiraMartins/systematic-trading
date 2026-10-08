@@ -53,6 +53,8 @@ def evaluate(model, items, loss_kind="ce"):
                     "probabilities": logits.softmax(-1).tolist(),
                 }
             )
+            if hasattr(model, "answer_probability_mass"):
+                rows[-1]["answer_probability_mass"] = model.answer_probability_mass
             if index % 250 == 0:
                 print(f"Validation: {index}/{len(items)}", flush=True)
     return {"loss": loss / len(items), **Benchmark.scores(rows), "predictions": rows}
@@ -158,6 +160,16 @@ def run(args):
                                      "prepare.py": hashlib.sha256((HERE / "prepare.py").read_bytes()).hexdigest()})
         config["pooling"] = "Fixed uniform whole-document pooling; no window labels"
         config["objective"] = f"Class-weighted document-level {args.objective}"
+        if args.model in ("qwen17", "qwen4"):
+            config.update(precision="NF4 double quantization; BF16 compute; FP32 adapters",
+                          prompt_sha256=model.prompt_sha256, answer_ids=model.answer_ids,
+                          source_budget=model.source_budget, thinking=False,
+                          probability_definition="Conditional on emitting A/B/C; not full-vocabulary confidence",
+                          truncation="First/last source-token clipping; fixed 4096 total input",
+                          source_sha256={**config["source_sha256"], "causal.py": hashlib.sha256((HERE / "causal.py").read_bytes()).hexdigest()})
+            config["versions"]["bitsandbytes"] = version("bitsandbytes")
+            config["pooling"] = "Single A/B/C response position; source first/last clipped"
+            config["objective"] = "Discriminative QLoRA: cross-entropy conditional on A/B/C (not full-vocabulary SFT)"
     args.output.mkdir(parents=True, exist_ok=True)
     state = {
         "epoch": 0,
@@ -291,9 +303,13 @@ def run(args):
         baseline = evaluate(model, validation, args.objective)
         selected = selection_score(baseline)
         save_json(baseline, args.output / "validation.json")
+        if research:
+            save_json(baseline, args.output / "epoch-zero-selection.json")
         baseline.pop("predictions")
         state["history"].append({"epoch": 0, "validation": baseline})
         state["best_f1"], state["best_epoch"] = selected, 0
+        if research:
+            checkpoint(args.output / "epoch-zero.pt")
         checkpoint(args.output / "best.pt")
         checkpoint()
         print(
@@ -365,6 +381,10 @@ def run(args):
         selected = evaluate(model, validation, args.objective)
         slogits = np.log(np.maximum([r["probabilities"] for r in selected["predictions"]], 1e-12))
         result = prediction_rows(prepared_records[selection_name], slogits, decision)
+        if args.model in ("qwen17", "qwen4"):
+            for row, record, scored in zip(result, prepared_records[selection_name], selected["predictions"], strict=True):
+                row["coverage"] = model.coverage(record["body"])
+                row["answer_probability_mass"] = scored["answer_probability_mass"]
         save_json({"metrics": breakdown(result), "predictions": result, "evaluation": "Selection fitting data"},
                   args.output / "selection.json")
         def predict(bodies):
@@ -398,7 +418,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--learning-rate", type=float, default=LEARNING_RATE)
     parser.add_argument("--encoder-learning-rate", type=float)
-    parser.add_argument("--model", choices=("laya", "finbert", "bge", "modernbert"), default="laya")
+    parser.add_argument("--model", choices=("laya", "finbert", "bge", "modernbert", "qwen17", "qwen4"), default="laya")
     parser.add_argument("--samples", type=int, help="Frozen nested research training subset")
     parser.add_argument("--objective", choices=("ce", "brier"), default="ce")
     parser.add_argument("--context", type=int, choices=(512, 1024, 2048, 4096))
@@ -419,6 +439,10 @@ if __name__ == "__main__":
         parser.error("LoRA adaptation requires a positive --lora-rank")
     if args.adaptation == "head" and args.lora_rank:
         parser.error("Head adaptation does not use --lora-rank; select --adaptation lora")
+    if args.model in ("qwen17", "qwen4") and (
+        args.adaptation != "lora" or args.context not in (None, 4096) or args.objective != "ce"
+    ):
+        parser.error("Qwen training requires LoRA, cross-entropy and 4096 total input tokens")
     if args.window_batch < 1:
         parser.error("Window batch must be positive")
     if args.device == "cuda":

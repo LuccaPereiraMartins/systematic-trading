@@ -1,4 +1,4 @@
-"""The pinned Laya SDK reference on selection/calibration only; no training or test access."""
+"""Pinned Laya/Qwen references on selection/calibration only; no training or test access."""
 
 import argparse
 from importlib.metadata import version
@@ -42,12 +42,23 @@ def fit(args):
     manifest = json.loads((args.splits / "manifest.json").read_text(encoding="utf-8"))
     if "prepared" not in manifest:
         raise ValueError("Use the fresh research splits")
+    kind = getattr(args, "model", "laya")
     files = ("decision_base.py", "protocol.py", "schemas.py", "prepare.py")
     config = {"family": "research_sdk", "model": LAYA_MODEL, "revision": LAYA_REVISION,
               "questions": LAYA_QUESTIONS, "labels": list(LABELS), "device": args.device,
               "split_manifest": manifest, "source_sha256": {name: fingerprint(HERE / name) for name in files},
               "versions": {name: version(name) for name in ("laya", "torch", "transformers")},
               "selection": "Unadapted SDK reference, no training", "api_cost_usd": 0.0}
+    if kind != "laya":
+        from causal import MODELS
+        files += ("causal.py", "label.py")
+        config.update(family="research_prompt", kind=kind, model=MODELS[kind][0], revision=MODELS[kind][1],
+                      adaptation="prompt", lora_rank=0, questions={}, max_len=4096,
+                      precision="NF4 double quantization; BF16 compute", thinking=False,
+                      selection="Unadapted single-token prompt reference, no training",
+                      probability_definition="Conditional on emitting A/B/C; not full-vocabulary confidence",
+                      source_sha256={name: fingerprint(HERE / name) for name in files})
+        config["versions"]["bitsandbytes"] = version("bitsandbytes")
     if args.output.exists() and any(args.output.iterdir()):
         previous = json.loads((args.output / "config.json").read_text(encoding="utf-8"))
         if not args.resume or any(previous.get(key) != value for key, value in config.items()):
@@ -66,11 +77,20 @@ def fit(args):
         (snapshot / name).write_bytes((HERE / name).read_bytes())
     save(config, args.output / "config.json")
     started = time.perf_counter()
-    runtime = BaseLaya(config, args.device)
+    if kind == "laya":
+        runtime = BaseLaya(config, args.device)
+    else:
+        from causal import CausalModel
+        runtime = CausalModel(args.device, kind=kind, adaptation="prompt", config=config).eval()
     config["load_seconds"] = time.perf_counter() - started
-    config["context"] = {key: runtime.agent.cfg[key] for key in ("max_len", "head_max_len")}
-    config["pooling"] = "Native SDK predict_long, recorded separately from fixed uniform adapted pooling"
-    save({key: config[key] for key in ("model", "revision", "questions", "context", "pooling")}, args.output / "base.json")
+    cfg = runtime.agent.cfg if kind == "laya" else runtime.cfg
+    config["context"] = {key: cfg[key] for key in ("max_len", "head_max_len")}
+    config["pooling"] = "Native SDK predict_long; most-confident window" if kind == "laya" else "Single response position"
+    if kind != "laya":
+        config.update(prompt_sha256=runtime.prompt_sha256, answer_ids=runtime.answer_ids,
+                      source_budget=runtime.source_budget, truncation="First/last source tokens; middle omitted")
+    save({key: config[key] for key in ("model", "revision", "questions", "context", "pooling", "source_sha256")},
+         args.output / "base.json")
     config["artifact_sha256"] = fingerprint(args.output / "base.json")
     save(config, args.output / "config.json")
     selection, calibration = [load_split(args.splits, name) for name in ("selection", "calibration")]
@@ -84,15 +104,22 @@ def fit(args):
         with path.open("a", encoding="utf-8") as stream:
             for record in records[len(saved):]:
                 row = {"body_sha256": body_hash(record), "logits": runtime.logits([record["body"]])[0].tolist()}
+                if kind != "laya":
+                    row.update(coverage=runtime.coverage(record["body"]),
+                               answer_probability_mass=runtime.answer_probability_mass)
                 stream.write(json.dumps(row) + "\n")
                 stream.flush()
                 saved.append(row)
                 if len(saved) % 100 == 0:
-                    print(f"SDK {name}: {len(saved)}/{len(records)}", flush=True)
+                    print(f"{kind} {name}: {len(saved)}/{len(records)}", flush=True)
         return np.array([row["logits"] for row in saved])
     logits, clogits = score("selection", selection), score("calibration", calibration)
     decision = calibrate(calibration, clogits, args.output)
     rows = prediction_rows(selection, logits, decision)
+    if kind != "laya":
+        cached = [json.loads(line) for line in (args.output / "selection-logits.jsonl").read_text().splitlines()]
+        for row, scored in zip(rows, cached, strict=True):
+            row.update(coverage=scored["coverage"], answer_probability_mass=scored["answer_probability_mass"])
     save({"metrics": breakdown(rows), "predictions": rows, "evaluation": "Selection data; no training"},
          args.output / "selection.json")
     def predict(bodies):
@@ -101,7 +128,7 @@ def fit(args):
     if args.device == "cuda":
         torch.cuda.reset_peak_memory_stats()
     measured = speed(predict, selection, torch.cuda.synchronize if args.device == "cuda" else lambda: None)
-    measured.update(batch_definition="Serial SDK document calls; native per-document windows",
+    measured.update(batch_definition="Serial SDK document calls; native windows" if kind == "laya" else "Serial single-response prompts",
                     peak_vram_bytes=torch.cuda.max_memory_allocated() if args.device == "cuda" else 0,
                     elapsed_seconds=time.perf_counter() - started,
                     cost_note="Local compute; pinned base weights, electricity and hardware are additional")
@@ -113,6 +140,7 @@ def fit(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--splits", type=Path, required=True)
+    parser.add_argument("--model", choices=("laya", "qwen17", "qwen4"), default="laya")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--device", choices=("cpu", "cuda"), default="cuda")
     parser.add_argument("--resume", action="store_true")
