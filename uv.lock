@@ -2562,6 +2562,8 @@ models = [
     { name = "langid" },
     { name = "openai" },
     { name = "requests" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "tiktoken" },
 ]
 
@@ -2595,6 +2597,7 @@ models = [
     { name = "langid", specifier = ">=1.1.6" },
     { name = "openai", specifier = "==3.22.1" },
     { name = "requests" },
+    { name = "scipy" },
     { name = "tiktoken", specifier = ">=0.14.0" },
 ]
 
