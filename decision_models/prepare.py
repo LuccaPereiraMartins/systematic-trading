@@ -16,6 +16,7 @@ from schemas import HERE, annotation, body_hash, read_records, save, write_recor
 
 PERMUTATIONS = 128
 NEAR_THRESHOLD = 0.90
+SEARCH_THRESHOLD = 0.80
 CUTOFFS = ("2026-03-31", "2026-06-30", "2026-09-30")
 
 
@@ -45,7 +46,7 @@ def cluster(rows, legacy_hashes):
         parents[max(a, b)] = min(a, b)
 
     hashes, events = {}, {}
-    index = MinHashLSH(threshold=NEAR_THRESHOLD, num_perm=PERMUTATIONS)
+    index = MinHashLSH(threshold=SEARCH_THRESHOLD, num_perm=PERMUTATIONS)
     for i, row in enumerate(rows):
         digest = body_hash(row)
         if digest in hashes:
@@ -54,7 +55,9 @@ def cluster(rows, legacy_hashes):
             hashes[digest] = i
             shingles = shingle_set(row["body"])
             signature = MinHash(num_perm=PERMUTATIONS, seed=42)
-            signature.update_batch(sorted(shingles))
+            ordered = sorted(shingles)
+            for start in range(0, len(ordered), 4096):
+                signature.update_batch(ordered[start:start + 4096])
             for other in index.query(signature):
                 candidate = shingle_set(rows[other]["body"])
                 if len(shingles & candidate) / len(shingles | candidate) >= NEAR_THRESHOLD:
@@ -144,7 +147,8 @@ def prepare(corpora, output, legacy=HERE / "data/dataset.json", validation=1200,
         details[name] = {"available": len(selected[name]), "chosen": len(chosen),
                          "families": dict(Counter(family(r) for r in chosen)),
                          "labeled": sum(annotation(r)["label"] is not None for r in chosen)}
-    save({"cutoffs": CUTOFFS, "near_duplicate_threshold": NEAR_THRESHOLD, "num_perm": PERMUTATIONS,
+    save({"cutoffs": CUTOFFS, "near_duplicate_threshold": NEAR_THRESHOLD, "candidate_threshold": SEARCH_THRESHOLD,
+          "num_perm": PERMUTATIONS,
           "inputs": {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in [*corpora, legacy]},
           "excluded": dict(excluded), "partitions": details,
           "method": "Temporal; event and verified near-duplicate groups; legacy excluded from validation/test"},

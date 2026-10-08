@@ -173,6 +173,9 @@ ECB author-named documents are excluded. News collection accepts
 [Wikinews text](https://en.wikinews.org/wiki/Wikinews:Copyright) with its publication-date-specific CC BY license.
 GDELT discovers links; it grants no publisher-content license. Only article text is retained, not image assets.
 Wikinews discovery includes two levels of financial/business subcategories, with deduplicated page identities.
+Corporate-release discovery uses SEC full-text matches for press/news releases and distribution-wire markers,
+then retains EX-99 exhibits. Monthly queries are subdivided when the search cap is reached. This avoids the
+initial description-only pilot's issuer/template bias, but remains a query-defined release cohort.
 
 Luna Flex labeling records response IDs, rubric/model provenance, token usage and charges. Its shared ledger
 reserves a conservative maximum before dispatch; interrupted or ambiguous requests retain reservations and
@@ -183,7 +186,9 @@ changes. Independent API benchmarking and cloud compute are outside the currentl
 
 Preparation excludes old bodies/near duplicates from validation/test and quarantines related groups crossing
 the March/June/September 2026 boundaries. Near-duplicate candidates use 128-permutation MinHash with seed 42;
-merges require verified five-word-shingle Jaccard similarity of at least .90. Labeling is followed by an explicit
+candidate search uses a lower .80 threshold; merges require verified five-word-shingle Jaccard similarity of
+at least .90. Candidate retrieval remains approximate and can miss near duplicates. Hash updates are batched
+to bound memory on very large documents. Labeling is followed by an explicit
 freeze; changed frozen outputs are rejected. Selection and calibration sets do not share related groups.
 Human-review forms hide model labels; conflicting double reviews stay unresolved. The review audit is not an
 expert assessment of investment usefulness.
