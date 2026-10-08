@@ -48,3 +48,9 @@ The first complete news pass retained 83 Wikinews articles dated Jan 2019–Apr 
 articles. A broader pass through two levels of financial/business subcategories is running before the news
 source is declared exhausted. The completed Fed corpus has 1,826 documents; ECB has 722. Data-PR CI lint,
 container build and container inference passed despite the unavailable local Docker daemon.
+
+Description-only release discovery overrepresented certain filing templates: SEC full-text results include
+major-company release exhibits whose descriptions contain only EX-99.1. Release discovery therefore now uses
+full-text press/news-release and distribution-wire markers, filtered to EX-99 exhibits. Queries are split by
+month and further subdivided rather than silently truncating capped searches. This is a reproducible query
+cohort, not a census of every corporate release. The earlier pilot remains recorded as an extraction check.

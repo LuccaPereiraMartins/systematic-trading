@@ -3,7 +3,7 @@
 import argparse
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import hashlib
 from itertools import zip_longest
 import json
@@ -13,6 +13,7 @@ import re
 import sqlite3
 import time
 from urllib.parse import urljoin, urlparse
+from urllib.parse import urlencode
 
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
@@ -105,6 +106,46 @@ def sec_candidates(family, start, end):
             for f in filings]
 
 
+def release_candidates(http, start, end):
+    """Discover release exhibits by their text, avoiding attachment-description template bias."""
+    query = '("press release" OR "news release" OR "GLOBE NEWSWIRE" OR "PRNewswire")'
+    periods, items = [], {}
+    first, final = date.fromisoformat(start), date.fromisoformat(end)
+    while first <= final:
+        next_month = (first.replace(day=28) + timedelta(days=4)).replace(day=1)
+        last = min(final, next_month - timedelta(days=1))
+        periods.append((first, last))
+        first = last + timedelta(days=1)
+    for first, last in periods:
+        parameters = {"q": query, "dateRange": "custom", "startdt": str(first), "enddt": str(last),
+                      "forms": "8-K", "from": 0, "size": 100}
+        root = "https://efts.sec.gov/LATEST/search-index?"
+        result = http.json(root + urlencode(parameters))
+        total = result["hits"]["total"]
+        if total["relation"] != "eq" or total["value"] > 10_000:
+            if first == last:
+                raise ValueError("SEC search cap reached for one day; narrower discovery is required")
+            midpoint = first + (last - first) // 2
+            periods.extend(((first, midpoint), (midpoint + timedelta(days=1), last)))
+            continue
+        for offset in range(0, total["value"], 100):
+            parameters["from"] = offset
+            discovery = root + urlencode(parameters)
+            page = result if offset == 0 else http.json(discovery)
+            for hit in page["hits"]["hits"]:
+                row = hit["_source"]
+                if not row.get("file_type", "").startswith("EX-99") or "8-K" not in row.get("root_forms", []):
+                    continue
+                accession, filename = hit["_id"].split(":", 1)
+                issuer = str(int(row["ciks"][0]))
+                url = f"https://www.sec.gov/Archives/edgar/data/{issuer}/{accession.replace('-', '')}/{filename}"
+                items[url] = {"document_id": url, "event_id": f"sec:{accession}", "url": url,
+                              "date": row["file_date"], "source": "sec", "document_type": "corporate_release",
+                              "issuer": issuer, "accession": accession, "discovery_url": discovery,
+                              "discovery_query": query, "attachment_description": row.get("file_description", "")}
+    return list(items.values())
+
+
 def fed_candidates(http, start, end):
     items = {}
     for year in range(int(start[:4]), int(end[:4]) + 1):
@@ -192,7 +233,7 @@ def news_candidates(http, start, end):
     try:
         items.extend(wikinews_candidates(http, start, end))
     except (requests.RequestException, ValueError, KeyError) as exc:
-        failures.append({"provider": "wikinews", "error": str(exc)})
+        raise RuntimeError("Required Wikinews discovery failed; cache retained for resume") from exc
     # VOA's accessible archive is also useful when recent GDELT coverage is sparse.
     for page in range(1, 11):
         url = f"https://www.voanews.com/z/599?p={page}"
@@ -311,7 +352,9 @@ def collect(family, number, start, end, output):
         candidates = json.loads(index_path.read_text(encoding="utf-8"))
     else:
         print(f"Indexing {family}: {start}..{end}", flush=True)
-        if family in ("8k", "releases", "6k"):
+        if family == "releases":
+            candidates = release_candidates(http, start, end)
+        elif family in ("8k", "6k"):
             candidates = sec_candidates(family, start, end)
         elif family == "fed":
             candidates = fed_candidates(http, start, end)
@@ -336,7 +379,7 @@ def collect(family, number, start, end, output):
             if added >= number:
                 break
             try:
-                documents = sec_documents(candidate, family) if candidate["source"] == "sec" else [candidate]
+                documents = sec_documents(candidate, family) if candidate["source"] == "sec" and not candidate.get("url") else [candidate]
                 accepted = 0
                 for document in documents:
                     if document["document_id"] in seen or added >= number:
