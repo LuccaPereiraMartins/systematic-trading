@@ -159,7 +159,8 @@ python decision_models/review.py --splits decision_models/data/research/benchmar
 
 Collection retains original responses in a SQLite cache, extraction hashes, source URLs, publication-date
 precision and reuse attribution. Early pilots used equivalent raw-byte/metadata files, also readable by the
-cache loader. SEC collection processes share one OS lock and the SDK's eight-request/second limit.
+cache loader. SEC collection processes share one OS lock. SDK metadata requests are capped at four/second;
+direct text requests have a separate 0.26-second interval, leaving their combined limit below ten/second.
 JSONL writes are resumable; failed requests remain retryable, permanent extraction/rights exclusions are logged.
 Changing dates or family requires a new output. Monthly sampling uses stable hash ordering, including month
 order, so small pilots do not always cover only the oldest months. Volume shortfalls are reported.
@@ -171,6 +172,7 @@ ECB author-named documents are excluded. News collection accepts
 [VOA-original text](https://www.voanews.com/p/5338.html) (agency material excluded) and
 [Wikinews text](https://en.wikinews.org/wiki/Wikinews:Copyright) with its publication-date-specific CC BY license.
 GDELT discovers links; it grants no publisher-content license. Only article text is retained, not image assets.
+Wikinews discovery includes two levels of financial/business subcategories, with deduplicated page identities.
 
 Luna Flex labeling records response IDs, rubric/model provenance, token usage and charges. Its shared ledger
 reserves a conservative maximum before dispatch; interrupted or ambiguous requests retain reservations and
