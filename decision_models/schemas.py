@@ -6,7 +6,7 @@ import json
 import time
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 LabelName = Literal["routine", "review_worthy", "unclear"]
@@ -31,15 +31,25 @@ Uncertainty = Literal[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 
 
 class Annotation(BaseModel):
+    model_config = ConfigDict(extra="allow")
     label: LabelName | None = None
     uncertainty: Uncertainty | None = None
 
 
 class FilingRecord(BaseModel):
+    model_config = ConfigDict(extra="allow")
     date: str
     body: str
     llm: Annotation
     human: Annotation
+    document_id: str | None = None
+    url: str | None = None
+    source: str = "sec"
+    document_type: str = "8-K"
+    event_id: str | None = None
+    issuer: str | None = None
+    date_precision: Literal["day", "second"] = "day"
+    provenance: dict = {}
 
 
 class LabelOutput(BaseModel):
@@ -71,6 +81,26 @@ def annotation(record):
 
 def body_hash(record):
     return hashlib.sha256(record["body"].encode()).hexdigest()
+
+
+def read_records(path):
+    """Read the legacy JSON array or a resumable JSONL corpus without dropping metadata."""
+    path = Path(path)
+    if not path.exists():
+        return []
+    content = path.read_text(encoding="utf-8")
+    rows = json.loads(content) if path.suffix == ".json" else [json.loads(line) for line in content.splitlines() if line]
+    return [FilingRecord.model_validate(row).model_dump(exclude_unset=True) for row in rows]
+
+
+def write_records(records, path):
+    path = Path(path)
+    if path.suffix == ".json":
+        return save(records, path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in records), encoding="utf-8")
+    replace_file(temporary, path)
 
 
 def replace_file(temporary, destination):

@@ -15,7 +15,7 @@ HERE = Path(__file__).resolve().parent
 
 def split_dataset(dataset=HERE / "data/dataset.json", output=HERE / "data/splits", pilot=HERE / "data/splits/pilot.json"):
     source = dataset.read_bytes()
-    records = [FilingRecord.model_validate(row).model_dump() for row in json.loads(source)]
+    records = [FilingRecord.model_validate(row).model_dump(exclude_unset=True) for row in json.loads(source)]
 
     def body_hash(row):
         return hashlib.sha256(row["body"].encode()).hexdigest()

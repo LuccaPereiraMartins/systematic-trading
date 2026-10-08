@@ -136,4 +136,52 @@ python decision_models/benchmark.py --saved decision_models/training_runs/blend-
 
 Retired length/keyword and cleaned/capped variants remain in that log and Git history. Their custom-transformer joblibs require the original source version; they are not supported by the active pipeline. Existing pure sklearn artifacts and neural checkpoints remain loadable. Source changes require `--refit` when using `evaluate.py`.
 
-Next work: stronger labels, issuer/temporal splits and baseline robustness before further post-training or RL. Performance on news or transcripts has not yet been evaluated.
+These historical runs are exploratory. The expanded study below adds fresh labels, temporal evaluation and
+source coverage before further adaptation. Performance on news has not yet been established.
+
+## Expanded research corpus
+
+The [approved research programme](research.md) defines five dependent PRs. New inputs and outputs live under
+`data/research/`; the original 10,000-row archive and its splits remain unchanged.
+
+```bash
+# Pilot each of 8k / releases / 6k / fed / ecb / news before scaling its target.
+python decision_models/collect_sources.py --family fed --number 50 --output decision_models/data/research/pilot/fed.jsonl
+# Prepare independently collected inputs; legacy rows are allowed in training only.
+python decision_models/prepare.py --corpora decision_models/data/research/corpus/fed.jsonl decision_models/data/research/corpus/6k.jsonl --output decision_models/data/research/benchmark
+# Label validation/test first, then training, all against ONE shared $3 ceiling.
+python decision_models/label.py --dataset decision_models/data/research/benchmark/validation-input.jsonl
+python decision_models/label.py --dataset decision_models/data/research/benchmark/test-input.jsonl
+python decision_models/label.py --dataset decision_models/data/research/benchmark/train-input.jsonl
+python decision_models/prepare.py --output decision_models/data/research/benchmark --freeze
+python decision_models/review.py --splits decision_models/data/research/benchmark --output decision_models/data/research/review
+```
+
+Collection retains original responses in a SQLite cache, extraction hashes, source URLs, publication-date
+precision and reuse attribution. Early pilots used equivalent raw-byte/metadata files, also readable by the
+cache loader. SEC collection processes share one OS lock and the SDK's eight-request/second limit.
+JSONL writes are resumable; failed requests remain retryable, permanent extraction/rights exclusions are logged.
+Changing dates or family requires a new output. Monthly sampling uses stable hash ordering, including month
+order, so small pilots do not always cover only the oldest months. Volume shortfalls are reported.
+
+Sources use institutional public text: [SEC reuse policy](https://www.sec.gov/files/about/webmaster-faq.htm),
+[Fed public-domain policy](https://www.federalreserve.gov/disclaimer.htm), and
+[ECB attribution/accuracy conditions](https://www.ecb.europa.eu/services/using-our-site/disclaimer/html/index.en.html).
+ECB author-named documents are excluded. News collection accepts
+[VOA-original text](https://www.voanews.com/p/5338.html) (agency material excluded) and
+[Wikinews text](https://en.wikinews.org/wiki/Wikinews:Copyright) with its publication-date-specific CC BY license.
+GDELT discovers links; it grants no publisher-content license. Only article text is retained, not image assets.
+
+Luna Flex labeling records response IDs, rubric/model provenance, token usage and charges. Its shared ledger
+reserves a conservative maximum before dispatch; interrupted or ambiguous requests retain reservations and
+cannot be automatically duplicated. Capacity rejections release their reservation. SDK automatic retries are
+disabled, service tier never upgrades, and successful ledger responses can restore an interrupted dataset.
+Never change `--ledger` to bypass the study-wide ceiling. Remaining user credits are reserved for future rubric
+changes. Independent API benchmarking and cloud compute are outside the currently authorised paid execution.
+
+Preparation excludes old bodies/near duplicates from validation/test and quarantines related groups crossing
+the March/June/September 2026 boundaries. Near-duplicate candidates use 128-permutation MinHash with seed 42;
+merges require verified five-word-shingle Jaccard similarity of at least .90. Labeling is followed by an explicit
+freeze; changed frozen outputs are rejected. Selection and calibration sets do not share related groups.
+Human-review forms hide model labels; conflicting double reviews stay unresolved. The review audit is not an
+expert assessment of investment usefulness.
