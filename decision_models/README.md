@@ -216,3 +216,30 @@ serial encoder document batches are identified separately. Frozen encoder timing
 GPU jobs share a lock. `--resume` rejects changed inputs/settings or completed artifacts. Full learning curves
 and final test comparisons remain pending the corpus freeze. Paid OpenAI benchmark execution is disabled;
 only the bounded Luna corpus-labeling entry point may spend credits.
+
+## Decision-model research runs
+
+```bash
+python decision_models/decision_base.py --splits decision_models/data/research/benchmark --output decision_models/training_runs/research/laya-sdk
+python decision_models/train.py --model laya --adaptation lora --lora-rank 8 --samples 1000 --context 1024 --objective brier --class-weight-power 1 --learning-rate .00003 --encoder-learning-rate .0001 --epochs 3 --splits decision_models/data/research/benchmark --output decision_models/training_runs/research/laya-lora-brier-1000-1024
+```
+
+Research adaptation fixes uniform whole-document pooling, uses raw selection macro F1 and calibrates the
+selected checkpoint on separate groups. Epoch zero remains eligible. Context ablations are 512/1024/2048/4096,
+with the same Laya prompt budget and 50% overlap; all source tokens remain represented. The pinned SDK reference
+uses its native most-confident-window choice aggregation. Adaptation benefits therefore must be compared with
+the matching uniform epoch-zero checkpoint, not attributed solely to a difference from the SDK reference.
+No per-window labels or new aggregation search are introduced.
+
+Cross-entropy and multiclass Brier objectives use one loss per complete document, with class weights applied
+after computing that loss. Nested sample curves start from the original pinned checkpoint each time. Head-only
+and rank-8 LoRA runs use at most three epochs, gradient accumulation across eight documents and resumable
+optimizer/RNG state. Context or subset changes are rejected on resume. SDK reference predictions checkpoint
+after each document. No research training entry point reads test.
+
+`modernbert` adds an [Apache-2.0 ModernBERT-large](https://huggingface.co/answerdotai/ModernBERT-large) architecture
+control pinned to revision `45bb4654a4d5aaff24dd11d4781fa46d39bf8c13`. Its head/LoRA comparisons use the same
+documents and fixed pooling. Encoder positional capacity is checked; FinBERT/BGE reject oversized contexts.
+Unsupported/OOM configurations and any smaller window-batch fallback belong in the experiment manifest; failed
+settings are not evidence that longer context lacks value. Structural Laya checks passed at all four contexts;
+quality ablations and sample-efficiency findings await the corpus freeze.

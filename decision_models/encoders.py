@@ -10,6 +10,7 @@ from schemas import LABELS, LAYA_MODEL, LAYA_REVISION, LAYA_QUESTIONS
 MODELS = {
     "finbert": ("ProsusAI/finbert", "4556d13015211d73dccd3fdd39d39232506f3e43"),
     "bge": ("BAAI/bge-small-en-v1.5", "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a"),
+    "modernbert": ("answerdotai/ModernBERT-large", "45bb4654a4d5aaff24dd11d4781fa46d39bf8c13"),
 }
 
 
@@ -41,7 +42,7 @@ class EncoderModel(nn.Module):
                     r=self.lora_rank,
                     lora_alpha=2 * self.lora_rank,
                     lora_dropout=0.05,
-                    target_modules=["query", "value"],
+                    target_modules=["Wqkv"] if self.kind == "modernbert" else ["query", "value"],
                     bias="none",
                 ),
             )
@@ -52,6 +53,11 @@ class EncoderModel(nn.Module):
         nn.init.zeros_(self.pool[-1].weight)
         self.classifier = nn.Sequential(nn.LayerNorm(width), nn.Dropout(0.1), nn.Linear(width, len(LABELS)))
         self.cfg = {"max_len": config.get("max_len", 512), "head_max_len": 0}
+        if self.cfg["max_len"] > self.encoder.config.max_position_embeddings:
+            raise ValueError("Context exceeds the pinned encoder's positional capacity")
+        self.uniform_pooling = config.get("pooling_method") == "uniform"
+        if self.uniform_pooling:
+            self.pool.requires_grad_(False)
         self.window_batch = config.get("window_batch", 8)
         self.to(self.device)
         if saved:
@@ -98,12 +104,12 @@ class EncoderModel(nn.Module):
 
     def forward(self, items):
         vectors = items.to(self.device) if isinstance(items, torch.Tensor) else self.features(items)
-        weights = self.pool(vectors).softmax(0)
+        weights = torch.ones((len(vectors), 1), device=self.device) / len(vectors) if self.uniform_pooling else self.pool(vectors).softmax(0)
         return self.classifier((weights * vectors).sum(0)), weights[:, 0]
 
 
 class DocumentModel(nn.Module):
-    def __init__(self, device="cuda", checkpoint=None, lora_rank=0):
+    def __init__(self, device="cuda", checkpoint=None, lora_rank=0, config=None):
         import laya
         import warnings
 
@@ -112,7 +118,7 @@ class DocumentModel(nn.Module):
         saved = torch.load(checkpoint, map_location="cpu", weights_only=True) if checkpoint else None
         self.training_config = saved["config"] if saved else None
         self.selected_epoch = saved["state"]["epoch"] if saved else None
-        config = self.training_config or {"model": LAYA_MODEL, "revision": LAYA_REVISION}
+        config = self.training_config or {"model": LAYA_MODEL, "revision": LAYA_REVISION, **(config or {})}
         self.model_id, self.revision = config["model"], config["revision"]
         self.kind = "laya"
         self.lora_rank = config.get("lora_rank", lora_rank)
@@ -127,6 +133,10 @@ class DocumentModel(nn.Module):
             if config["labels"] != list(LABELS):
                 raise ValueError("Checkpoint label order differs from benchmark")
             self.cfg.update(max_len=config["max_len"], head_max_len=config["head_max_len"])
+        elif "max_len" in config:
+            self.cfg["max_len"] = config["max_len"]
+        if self.cfg["max_len"] > self.base.encoder.config.max_position_embeddings:
+            raise ValueError("Context exceeds the pinned encoder's positional capacity")
         for name, parameter in self.base.named_parameters():
             parameter.requires_grad_(not name.startswith(("encoder.", "act_head.")))
         if self.lora_rank:
@@ -146,6 +156,9 @@ class DocumentModel(nn.Module):
         self.base.head_checkpointing = True
         self.pool = nn.Sequential(nn.Linear(3, 16), nn.Tanh(), nn.Linear(16, 1, bias=False))
         nn.init.zeros_(self.pool[-1].weight)  # Begin with uniform document pooling.
+        self.uniform_pooling = config.get("pooling_method") == "uniform"
+        if self.uniform_pooling:
+            self.pool.requires_grad_(False)
         self.to(self.device)
         if saved:
             expected = {name for name, parameter in self.named_parameters() if parameter.requires_grad}
@@ -202,15 +215,17 @@ class DocumentModel(nn.Module):
                 )
                 scores.append(logits)
             scores = torch.cat(scores)
+            if self.uniform_pooling:
+                return scores.mean(0), torch.ones(len(scores), device=self.device) / len(scores)
             # Gate on relative scores so arbitrary common logit offsets cannot affect attention.
             attention = self.pool(scores.log_softmax(-1)).float().softmax(0)
             return (attention * scores).sum(0), attention[:, 0]
 
 
-def load_model(device="cuda", checkpoint=None, kind="laya", adaptation="head", lora_rank=0):
+def load_model(device="cuda", checkpoint=None, kind="laya", adaptation="head", lora_rank=0, config=None):
     if checkpoint:
         config = torch.load(checkpoint, map_location="cpu", weights_only=True)["config"]
         kind = config.get("kind", "laya")
     if kind == "laya":
-        return DocumentModel(device, checkpoint, lora_rank)
-    return EncoderModel(device, kind, adaptation, lora_rank, checkpoint)
+        return DocumentModel(device, checkpoint, lora_rank, config)
+    return EncoderModel(device, kind, adaptation, lora_rank, checkpoint, config)
