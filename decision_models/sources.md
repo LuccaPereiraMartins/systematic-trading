@@ -12,7 +12,7 @@ auditing. Original responses, retrieval times and hashes remain in the local res
 | Federal Reserve | Annual press-release and speech HTML archives; requests/BeautifulSoup | [Public domain unless otherwise indicated](https://www.federalreserve.gov/disclaimer.htm); attribution, exclude third-party media | Complete pass: 1,826 accepted from 1,831 indexed in Jan 2019–Sep 2026; 55 in Q3 2026 |
 | ECB | Versioned JSON archive used by its website, followed by English institutional HTML | [Attribution, accuracy and stated modifications](https://www.ecb.europa.eu/services/using-our-site/disclaimer/html/index.en.html); author-named documents excluded | Complete pass: 722 accepted in Jan 2019–Sep 2026; 27 in Q3 2026 |
 | Public news | [Wikinews category API](https://www.mediawiki.org/wiki/API:Categorymembers), VOA archive, GDELT URL discovery | [Wikinews CC BY 4.0 / earlier CC BY 2.5](https://en.wikinews.org/wiki/Wikinews:Copyright); [VOA-original text only](https://www.voanews.com/p/5338.html); agency and mixed-rights text excluded | Broader pass: 201 accepted from 4,535 candidates; all Wikinews, Jan 2019–Apr 2026, none in Q3 2026 |
-| Official financial news | HM Treasury articles: GOV.UK Search API discovery and supported Content API extraction; requests/BeautifulSoup | [Open Government Licence v3.0, except where otherwise stated](https://www.gov.uk/help/reuse-govuk-content); retain attribution, omit assets and special-rights notices | 1,329 discovery candidates in Jan 2019–Sep 2026; 50-document pilot spans all eight years and includes two Q3 2026 articles; complete pass running |
+| Official financial news | HM Treasury articles: GOV.UK Search API discovery and supported Content API extraction; requests/BeautifulSoup | [Open Government Licence v3.0, except where otherwise stated](https://www.gov.uk/help/reuse-govuk-content); retain attribution, omit assets and special-rights notices | Complete pass: 1,257 accepted from 1,329 candidates in Jan 2019–Sep 2026, including 35 in Q3 2026; 72 later-revised articles excluded |
 
 Fed and ECB collection uses their article archives rather than economic-series SDKs. GDELT has a
 [MIT Python client](https://github.com/alex9smith/gdelt-doc-api), but this implementation uses its small REST
@@ -55,6 +55,8 @@ do not establish recent-news generalization: Wikinews contributes no Q3 2026 tes
 articles were found. HM Treasury extends the news family with official announcements; provider counts and
 metrics remain separate. The completed Fed corpus has 1,826 documents; ECB has 722. Data-PR CI lint,
 container build and container inference passed despite the unavailable local Docker daemon.
+An actual 12-document blinded rubric pilot is available locally under `data/research/rubric-pilot/`.
+Its teacher labels are hidden; it is a rubric check, not the later independent test audit.
 
 Description-only release discovery overrepresented certain filing templates: SEC full-text results include
 major-company release exhibits whose descriptions contain only EX-99.1. Release discovery therefore now uses

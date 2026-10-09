@@ -3,6 +3,7 @@
 import torch
 from torch import nn
 from torch.nn.utils.rnn import pad_sequence
+from torch.utils.checkpoint import checkpoint
 from transformers import AutoModel, AutoTokenizer
 from schemas import LABELS, LAYA_MODEL, LAYA_REVISION, LAYA_QUESTIONS
 
@@ -89,13 +90,17 @@ class EncoderModel(nn.Module):
                 rows = [torch.tensor(ids, device=self.device) for ids in items[start : start + self.window_batch]]
                 ids = pad_sequence(rows, batch_first=True, padding_value=self.tokenizer.pad_token_id)
                 mask = ids != self.tokenizer.pad_token_id
-                hidden = self.encoder(input_ids=ids, attention_mask=mask).last_hidden_state
-                if self.kind == "bge":
-                    pooled = hidden[:, 0]
-                else:
-                    pooled = (hidden.float() * mask[:, :, None]).sum(1) / mask.sum(1)[:, None]
-                vectors.append(pooled.float())
+                # Recompute whole window batches so long documents retain inputs, not every hidden activation.
+                pooled = (checkpoint(self.window_features, ids, mask, use_reentrant=False)
+                          if self.adaptation == "lora" and torch.is_grad_enabled() else self.window_features(ids, mask))
+                vectors.append(pooled)
         return torch.cat(vectors)
+
+    def window_features(self, ids, mask):
+        hidden = self.encoder(input_ids=ids, attention_mask=mask).last_hidden_state
+        if self.kind == "bge":
+            return hidden[:, 0].float()
+        return (hidden.float() * mask[:, :, None]).sum(1) / mask.sum(1)[:, None]
 
     def embed(self, body):
         """Frozen linear baselines use the normalized mean of every raw window vector."""
@@ -205,14 +210,8 @@ class DocumentModel(nn.Module):
                 lengths = torch.tensor([len(seq) for seq in sequences], device=self.device)
                 mask = torch.arange(ids.shape[1], device=self.device)[None, :] < lengths[:, None]
                 markers = torch.tensor([positions for _, positions in chunk], device=self.device)
-                logits, _ = self.base(
-                    ids,
-                    mask,
-                    markers,
-                    torch.ones_like(markers, dtype=torch.bool),
-                    torch.zeros(len(chunk), dtype=torch.long, device=self.device),
-                    detach_encoder=not self.lora_rank,
-                )
+                logits = (checkpoint(self.window_scores, ids, mask, markers, use_reentrant=False)
+                          if torch.is_grad_enabled() else self.window_scores(ids, mask, markers))
                 scores.append(logits)
             scores = torch.cat(scores)
             if self.uniform_pooling:
@@ -220,6 +219,12 @@ class DocumentModel(nn.Module):
             # Gate on relative scores so arbitrary common logit offsets cannot affect attention.
             attention = self.pool(scores.log_softmax(-1)).float().softmax(0)
             return (attention * scores).sum(0), attention[:, 0]
+
+    def window_scores(self, ids, mask, markers):
+        logits, _ = self.base(ids, mask, markers, torch.ones_like(markers, dtype=torch.bool),
+                              torch.zeros(len(ids), dtype=torch.long, device=self.device),
+                              detach_encoder=not self.lora_rank)
+        return logits
 
 
 def load_model(device="cuda", checkpoint=None, kind="laya", adaptation="head", lora_rank=0, config=None):
