@@ -193,6 +193,10 @@ candidate search uses a lower .80 threshold; merges require verified five-word-s
 at least .90. Candidate retrieval remains approximate and can miss near duplicates. Hash updates are batched
 to bound memory on very large documents. Labeling is followed by an explicit
 freeze; changed frozen outputs are rejected. Selection and calibration sets do not share related groups.
+Primary 8-K HTML is also reconstructed offline with the pinned edgartools text formatter. An exact match
+to an old body joins its group even when extraction differences fall below the shingle threshold; the link
+also reaches related release exhibits through event IDs. The prepared manifest records reconstruction
+version, counts and body/raw hashes. Canonical model inputs remain unchanged; retained raw caches are required.
 Every selected validation/test document must be labeled before freezing. The manifest records queued,
 labeled and missing training counts, including missing-label families and errors if the budget limits training.
 Primary 8-Ks are capped at 40% of train, validation and test, both before labeling and on retained labels.
