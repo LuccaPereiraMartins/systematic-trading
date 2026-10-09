@@ -74,7 +74,7 @@ def corpus_tables(prepared):
     if prepared.get("partitions"):
         parts += [table(["Partition", "Available after exclusions", "Selected before labeling"],
                         [[name, counts["available"], counts["chosen"]] for name, counts in prepared["partitions"].items()]),
-                  "Selection applies the recorded split ceilings and training 8-K share cap; these counts are distinct "
+                  "Selection applies the recorded split ceilings and train/validation/test 8-K share cap; these counts are distinct "
                   "from labeled support below."]
     return parts
 
@@ -358,10 +358,13 @@ def build(splits, study, human=None):
     coverage = freeze["manifest"].get("label_coverage", {})
     if coverage:
         parts.insert(parts.index("## Model comparisons") - 1,
-                     table(["Label queue", "Queued", "Labeled", "Unlabeled"],
-                           [[name, value['queued'], value['labeled'], value['unlabeled']] for name, value in coverage.items()]) +
+                     table(["Label queue", "Queued", "Labeled", "Unlabeled", "Retained", "8-K cap excluded"],
+                           [[name, value['queued'], value['labeled'], value['unlabeled'],
+                             value.get('retained', value['labeled']), value.get('excluded_8k_share', 0)]
+                            for name, value in coverage.items()]) +
                      "\n\nValidation/test labeling must be complete. A budget-limited training queue can retain unlabeled rows; "
-                     "family/error counts remain in the manifest. Attained sample sizes, rather than collection targets, define the learning curves.")
+                     "family/error counts remain in the manifest. The 40% primary 8-K cap is checked again on retained labels; "
+                     "cap exclusions remain in the input queue and project spending. Attained sample sizes, rather than collection targets, define the learning curves.")
         if all("teacher_cost_usd" in value for value in coverage.values()):
             parts.insert(parts.index("## Model comparisons") - 1,
                          table(["Label queue", "Successful teacher labels", "Recorded USD", "Cost unavailable"],
