@@ -50,6 +50,7 @@ def evaluate(model, items, loss_kind="ce"):
                     "reference": LABELS[label],
                     "body_sha256": body_hash,
                     "prediction": LABELS[logits.argmax().item()],
+                    "logits": logits.float().tolist(),
                     "probabilities": logits.softmax(-1).tolist(),
                 }
             )
@@ -191,8 +192,9 @@ def run(args):
             "checkpoint_selection": "raw",
             **saved["config"],
         }
+        ignored = ("git_revision", "gpu") if research else ("epochs", "git_revision", "source_sha256", "gpu")
         for key in config:
-            if key not in ("epochs", "git_revision", "source_sha256", "gpu") and config[key] != previous_config.get(
+            if key not in ignored and config[key] != previous_config.get(
                 key
             ):
                 raise ValueError(f"Resume configuration changed: {key}")
@@ -376,10 +378,10 @@ def run(args):
         model.eval()
         citems = prepare("calibration")
         scored = evaluate(model, citems, args.objective)
-        clogits = np.log(np.maximum([r["probabilities"] for r in scored["predictions"]], 1e-12))
+        clogits = np.array([r["logits"] for r in scored["predictions"]])
         decision = calibrate(prepared_records["calibration"], clogits, args.output)
         selected = evaluate(model, validation, args.objective)
-        slogits = np.log(np.maximum([r["probabilities"] for r in selected["predictions"]], 1e-12))
+        slogits = np.array([r["logits"] for r in selected["predictions"]])
         result = prediction_rows(prepared_records[selection_name], slogits, decision)
         if args.model in ("qwen17", "qwen4"):
             for row, record, scored in zip(result, prepared_records[selection_name], selected["predictions"], strict=True):
@@ -392,11 +394,16 @@ def run(args):
                 logits = [model(model.windows(body))[0].cpu().numpy() for body in bodies]
             p = probabilities(logits, decision["temperature"])
             return p, {key: discard(p, value["threshold"]) for key, value in decision["policies"].items()}
+        if args.device == "cuda":
+            optimizer.zero_grad(set_to_none=True)
+            torch.cuda.reset_peak_memory_stats()
         measured = speed(predict, prepared_records[selection_name],
                          torch.cuda.synchronize if args.device == "cuda" else lambda: None)
-        measured.update(peak_vram_bytes=state.get("peak_vram_bytes", 0),
+        measured.update(peak_vram_bytes=torch.cuda.max_memory_allocated() if args.device == "cuda" else 0,
+                        training_peak_vram_bytes=state.get("peak_vram_bytes", 0),
                         adapter_bytes=(args.output / "best.pt").stat().st_size,
-                        batch_definition="Serial documents; batched windows within each document",
+                        batch_definition="Serial single-response prompts" if args.model.startswith("qwen") else
+                        "Serial documents; batched windows within each document",
                         cost_note="Local compute; base weights, electricity and hardware are additional")
         save_json(measured, args.output / "performance.json")
         save_json({"config_sha256": fingerprint(args.output / "config.json"),

@@ -39,6 +39,11 @@ laya = [
 dev = [
     "ruff",
 ]
+reports = [
+    "matplotlib>=3.11.2",
+    "pypdf>=6.19.0",
+    "reportlab>=5.0.1",
+]
 
 [tool.uv]
 package = false

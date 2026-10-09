@@ -278,3 +278,59 @@ subset. Qwen3-1.7B has the full attainable learning curve; Qwen3-4B adaptation i
 K-bit training preparation can change frozen layer precision, so the matched epoch-zero adapter model is the
 correct baseline for adaptation gains. The separate prompt-only reference remains useful as a deployed setup.
 No paid LLM reference is executed; its proposed cost will be quoted before any future authorization.
+
+## Serial study and report
+
+Install the optional report dependencies in the same Python environment used for the study:
+
+```bash
+uv pip install --system --group reports
+python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+python decision_models/study.py --splits decision_models/data/research/benchmark --output decision_models/training_runs/research-study --stage all
+```
+
+Use CUDA-enabled PyTorch for GPU jobs. The current local runs use Python 3.13 and torch 2.14.0+cu126;
+`uv run python` can select a separate CPU-only environment. Versions are recorded and changed runtimes are
+rejected when verifying frozen artifacts. API/container dependencies remain separate from report/GPU groups.
+
+`fit` runs every CPU/GPU experiment serially and opens train/selection/calibration only. Baselines have the
+full attainable nested curves. Laya screens head/LoRA x CE/Brier x unweighted/balanced at 1000, then contexts
+at 4000; its chosen recipes receive full curves. FinBERT/BGE screen two learning rates for head/LoRA, then
+receive full curves. ModernBERT screens 512/4096 and two rates at 1000, with the selected architecture control
+at 4000. Qwen screens .00005/.0001 at 1000; 1.7B receives the full curve, 4B a bounded 4000 comparison.
+Nearest attainable sizes replace unavailable targets and remain explicit in plan.json. All neural recipes
+have at most three epochs, and epoch zero is eligible. Matched zero controls preserve the actual pre-update
+weights. Recipe-tuning labels are additional to each curve's stated training size.
+
+Each job writes a separate log, source/version snapshots, resumable artifacts and a completion checksum.
+OOM settings stay recorded; non-causal models may retry in a separate directory with window batch one.
+Unexpected failures stop the runner for diagnosis. Completed runs reject changed data, sources, versions or
+artifacts. A changed study plan needs a new output; do not reuse a test set for subsequent recipe selection.
+
+`freeze` records all comparisons, selection scores, calibration/policy decisions and artifact hashes before
+test can be opened. `test` checks that freeze first, checkpoints every local document prediction and verifies
+completed result files on resume. The legacy benchmark still refuses the fresh research test. Paired bootstrap
+uses 2000 shared draws of whole event/near-duplicate groups; it reports fixed-run intervals, adaptation gains
+against matched zero, and adjacent learning-curve differences. It does not measure training-seed variability
+or correct multiple comparisons. Fully covered Qwen rows form one identical matched subset for every model.
+
+`report` generates inspectable JSON evidence, Markdown, PNG figures and a PDF under the study's report folder.
+It includes source/class support, critical misses, achieved discard-policy rates, calibration/uncertainty,
+learning/context/coverage comparisons, warm latency, separate inference/training allocated VRAM, cached
+weight/checkpoint sizes and a non-executed paid-reference cost scenario. Render and inspect the PDF before
+publication. Human quality remains pending until blinded reviews are imported; it never defaults to teacher
+agreement. Supply the review overlay only for a separate report audit:
+
+```bash
+python decision_models/study.py --splits decision_models/data/research/benchmark --output decision_models/training_runs/research-study --stage report --human decision_models/data/research/reviewed-test.jsonl
+```
+
+Fresh preparation preserves old annotations for audit but requeues teacher labels from another rubric.
+The frozen manifest also binds nested subset IDs. The original archive is unchanged. All new labels still
+share the $3 Luna Flex ledger; runner/test/report code does not dispatch paid API calls.
+
+Engineering verification covered an actual CPU baseline, tiny Laya and Qwen adaptation, matched controls,
+freeze-before-test, resumable test inference, identical coverage filtering, changed-metadata rejection and
+Markdown/PDF rendering on synthetic fixtures. Hand checks verified paired group-bootstrap F1/miss behavior.
+These checks establish the pipeline, not findings from the new corpus. Keep all five PRs draft until the
+actual study, human audit and publication/reproducibility review are complete.

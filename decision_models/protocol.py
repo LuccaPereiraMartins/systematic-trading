@@ -155,6 +155,9 @@ def calibrate(records, logits, output):
 
 def training_subset(splits, number):
     rows = load_split(splits, "train")
+    frozen = json.loads((splits / "manifest.json").read_text(encoding="utf-8"))
+    if frozen.get("subsets_sha256") and fingerprint(splits / "subsets.json") != frozen["subsets_sha256"]:
+        raise ValueError("Frozen training subsets changed")
     manifest = json.loads((splits / "subsets.json").read_text(encoding="utf-8"))
     number = len(rows) if number is None else number
     identities = manifest["subsets"].get(str(number))
