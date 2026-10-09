@@ -77,6 +77,15 @@ Valid source text can contain Unicode line separators, so JSONL readers split on
 Preparation records raw input counts and publication ranges, then exclusions by family; acquisition
 counts must not be presented as labeled examples or independent evaluation support.
 
+The legacy archive used edgartools primary-document text, while the new corpus uses HTML text extraction.
+An offline check of 1,485 validation/test-date candidates found 218 exact old-body matches, including
+64 below .90 five-word-shingle Jaccard similarity. Reconstruction uses the retained primary HTML and
+the pinned SDK's text formatter; it does not infer shared identity from issuer names. Preparation now
+adds those exact-format links to the event/duplicate groups before split selection, including related
+release exhibits. It records the SDK version, attempted/matched counts and body/raw hashes without
+changing canonical source bodies. This closes verified cross-format overlaps; other duplicate retrieval
+remains approximate. Missing or changed retained raw responses stop reconstruction before labeling.
+
 Description-only release discovery overrepresented certain filing templates: SEC full-text results include
 major-company release exhibits whose descriptions contain only EX-99.1. Release discovery therefore now uses
 full-text press/news-release and distribution-wire markers, filtered to EX-99 exhibits. Queries are split by
