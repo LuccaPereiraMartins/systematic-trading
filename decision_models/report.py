@@ -67,6 +67,13 @@ def corpus_tables(prepared):
                   "experimented on and are eligible only for training. SEC dates are filing dates, including release exhibits, "
                   "and may be later than publication elsewhere. Other sources use original article dates or publication metadata; "
                   "temporal splits use these recorded document dates at day precision."]
+    if prepared.get("legacy_extraction_check"):
+        legacy = prepared["legacy_extraction_check"]
+        parts += [table(["Legacy text formatter", "Primary filings reconstructed", "Exact old-body matches"],
+                        [[f"edgartools {legacy['sdk_version']}", legacy["attempted"], legacy["matched_documents"]]]),
+                  "Offline reconstruction of retained primary HTML links exact old-body hashes across text-extraction formats. "
+                  "These links also quarantine related release exhibits from fresh evaluation. Matching candidates are not "
+                  "additional exclusion counts; their groups enter the exclusion rules below. Canonical model inputs are unchanged."]
     if prepared.get("exclusions_by_family"):
         parts += [table(["Family", "Exclusion reason", "Documents"],
                         [[name, reason.replace("_", " "), count]
