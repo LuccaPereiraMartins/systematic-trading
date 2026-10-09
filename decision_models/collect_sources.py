@@ -169,7 +169,7 @@ def release_candidates(http, start, end):
         last = min(final, next_month - timedelta(days=1))
         periods.append((first, last))
         first = last + timedelta(days=1)
-    for first, last in periods:
+    def search(first, last):
         parameters = {"q": query, "dateRange": "custom", "startdt": str(first), "enddt": str(last),
                       "forms": "8-K", "from": 0, "size": 100}
         root = "https://efts.sec.gov/LATEST/search-index?"
@@ -178,11 +178,7 @@ def release_candidates(http, start, end):
             raise ValueError("SEC discovery returned incomplete search results")
         total = result["hits"]["total"]
         if total["relation"] != "eq" or total["value"] > 10_000:
-            if first == last:
-                raise ValueError("SEC search cap reached for one day; narrower discovery is required")
-            midpoint = first + (last - first) // 2
-            periods.extend(((first, midpoint), (midpoint + timedelta(days=1), last)))
-            continue
+            return False
         for offset in range(0, total["value"], 100):
             parameters["from"] = offset
             discovery = root + urlencode(parameters)
@@ -201,7 +197,23 @@ def release_candidates(http, start, end):
                               "date": row["file_date"], "source": "sec", "document_type": "corporate_release",
                               "issuer": issuer, "accession": accession, "discovery_url": discovery,
                               "discovery_query": query, "attachment_description": row.get("file_description", "")}
-        print(f"Release discovery: {first}..{last}; {len(items)} unique exhibits", flush=True)
+        return True
+
+    for first, last in periods:
+        try:
+            complete = search(first, last)
+        except requests.HTTPError as exc:
+            if exc.response is None or exc.response.status_code not in (500, 502, 503, 504):
+                raise
+            complete = False
+        if not complete:
+            if first == last:
+                raise ValueError("SEC search failed or reached its cap for one day; discovery remains incomplete")
+            midpoint = first + (last - first) // 2
+            periods.extend(((first, midpoint), (midpoint + timedelta(days=1), last)))
+            print(f"Retrying SEC release discovery in smaller ranges: {first}..{last}", flush=True)
+        else:
+            print(f"Release discovery: {first}..{last}; {len(items)} unique exhibits", flush=True)
     return list(items.values())
 
 
