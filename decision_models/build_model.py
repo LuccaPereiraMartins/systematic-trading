@@ -17,7 +17,7 @@ def build_model():
         content = archive.read("train.jsonl")
     if hashlib.sha256(content).hexdigest() != manifest["splits"]["train"]["sha256"]:
         raise ValueError("Training split checksum mismatch")
-    rows = [json.loads(line) for line in content.decode("utf-8").splitlines()]
+    rows = [json.loads(line) for line in content.decode("utf-8").split("\n") if line.strip()]
     model = make("tfidf", class_weight="balanced", max_iter=1000)
     with threadpool_limits(limits=4):
         model.fit([row["body"] for row in rows], [annotation(row)["label"] for row in rows])
