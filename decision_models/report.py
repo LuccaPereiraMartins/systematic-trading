@@ -318,6 +318,13 @@ def build(splits, study, human=None):
                        [[source, *[source_counts[split][source] for split in source_counts]] for source in providers]) +
                  "\n\nThe news family can contain official financial announcements as well as Wikinews. "
                  "Provider coverage is reported separately; official announcements do not establish commercial-journalism generalization.")
+    coverage = freeze["manifest"].get("label_coverage", {})
+    if coverage:
+        parts.insert(parts.index("## Model comparisons") - 1,
+                     table(["Label queue", "Queued", "Labeled", "Unlabeled"],
+                           [[name, value['queued'], value['labeled'], value['unlabeled']] for name, value in coverage.items()]) +
+                     "\n\nValidation/test labeling must be complete. A budget-limited training queue can retain unlabeled rows; "
+                     "family/error counts remain in the manifest. Attained sample sizes, rather than collection targets, define the learning curves.")
     policy_rows = []
     for n in names:
         for key, value in scored[n]["policies"].items():

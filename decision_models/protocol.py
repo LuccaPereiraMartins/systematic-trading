@@ -116,7 +116,7 @@ def metrics(rows):
         bins.append({"lower": index / 10, "upper": (index + 1) / 10, "count": int(mask.sum()),
                      "accuracy": accuracy, "confidence": mean_confidence})
     default_policy = policy_scores(truth, predicted == 0)
-    return {"count": len(rows), "macro_f1": float(f1_score(truth, predicted, labels=[0, 1, 2], average="macro")),
+    return {"count": len(rows), "macro_f1": float(f1_score(truth, predicted, labels=[0, 1, 2], average="macro", zero_division=0)),
             "accuracy": float(accuracy_score(truth, predicted)),
             "per_class": {name: {"precision": float(precision[i]), "recall": float(recall[i]),
                                  "f1": float(f1[i]), "support": int(support[i])} for i, name in enumerate(LABELS)},
