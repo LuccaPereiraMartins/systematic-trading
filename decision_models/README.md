@@ -246,6 +246,8 @@ after computing that loss. Nested sample curves start from the original pinned c
 and rank-8 LoRA runs use at most three epochs, gradient accumulation across eight documents and resumable
 optimizer/RNG state. Context or subset changes are rejected on resume. SDK reference predictions checkpoint
 after each document. No research training entry point reads test.
+Whole window batches are recomputed during backward passes to bound retained activations on long documents.
+Dropout RNG is preserved; pooling and the document-level loss remain unchanged.
 
 `modernbert` adds an [Apache-2.0 ModernBERT-large](https://huggingface.co/answerdotai/ModernBERT-large) architecture
 control pinned to revision `45bb4654a4d5aaff24dd11d4781fa46d39bf8c13`. Its head/LoRA comparisons use the same
