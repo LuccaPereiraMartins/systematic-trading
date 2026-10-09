@@ -1,6 +1,6 @@
 # Public-source audit
 
-Checked 2026-10-08. Counts below come from the collectors' saved indexes and extraction pilots, not estimates
+Checked 2026-10-09. Counts below come from the collectors' saved indexes and extraction pilots, not estimates
 of the number of usable labeled examples. The final corpus census is produced after collection and duplicate
 auditing. Original responses, retrieval times and hashes remain in the local response cache.
 
@@ -9,14 +9,20 @@ auditing. Original responses, retrieval times and hashes remain in the local res
 | Primary 8-K | [EDGAR](https://www.sec.gov/edgar/search/), [edgartools](https://github.com/dgunning/edgartools) 5.59.1, MIT SDK | [Public filing content is free to access and reuse](https://www.sec.gov/files/about/webmaster-faq.htm); exclude images | 117,209 indexed in Jan 2025–Sep 2026; 50-document pilot |
 | Corporate releases | EX-99 release/earnings/announcement exhibits attached to 8-Ks; same SDK | Same SEC policy; retain the filing accession for event grouping | 49 accepted after one MD&A exhibit was excluded from a 50-document pilot; attachment availability limits yield |
 | 6-K | EDGAR primary documents; same SDK | Same SEC policy | 199,378 indexed in Jan 2019–Sep 2026; 50-document pilot |
-| Federal Reserve | Annual press-release and speech HTML archives; requests/BeautifulSoup | [Public domain unless otherwise indicated](https://www.federalreserve.gov/disclaimer.htm); attribution, exclude third-party media | 1,831 indexed in Jan 2019–Sep 2026; 50-document pilot |
-| ECB | Versioned JSON archive used by its website, followed by English institutional HTML | [Attribution, accuracy and stated modifications](https://www.ecb.europa.eu/services/using-our-site/disclaimer/html/index.en.html); author-named documents excluded | 722 eligible archive entries in Jan 2019–Sep 2026; 50-document pilot |
-| General news | [Wikinews category API](https://www.mediawiki.org/wiki/API:Categorymembers), VOA archive, GDELT URL discovery | [Wikinews CC BY 4.0 / earlier CC BY 2.5](https://en.wikinews.org/wiki/Wikinews:Copyright); [VOA-original text only](https://www.voanews.com/p/5338.html); agency and mixed-rights text excluded | 2,356 discovery candidates, mostly historical Wikinews entries; 50-document pilot, all Wikinews; full coverage filtering pending |
+| Federal Reserve | Annual press-release and speech HTML archives; requests/BeautifulSoup | [Public domain unless otherwise indicated](https://www.federalreserve.gov/disclaimer.htm); attribution, exclude third-party media | Complete pass: 1,826 accepted from 1,831 indexed in Jan 2019–Sep 2026; 55 in Q3 2026 |
+| ECB | Versioned JSON archive used by its website, followed by English institutional HTML | [Attribution, accuracy and stated modifications](https://www.ecb.europa.eu/services/using-our-site/disclaimer/html/index.en.html); author-named documents excluded | Complete pass: 722 accepted in Jan 2019–Sep 2026; 27 in Q3 2026 |
+| Public news | [Wikinews category API](https://www.mediawiki.org/wiki/API:Categorymembers), VOA archive, GDELT URL discovery | [Wikinews CC BY 4.0 / earlier CC BY 2.5](https://en.wikinews.org/wiki/Wikinews:Copyright); [VOA-original text only](https://www.voanews.com/p/5338.html); agency and mixed-rights text excluded | Broader pass: 201 accepted from 4,535 candidates; all Wikinews, Jan 2019–Apr 2026, none in Q3 2026 |
+| Official financial news | HM Treasury articles: GOV.UK Search API discovery and supported Content API extraction; requests/BeautifulSoup | [Open Government Licence v3.0, except where otherwise stated](https://www.gov.uk/help/reuse-govuk-content); retain attribution, omit assets and special-rights notices | 1,329 discovery candidates in Jan 2019–Sep 2026; 50-document pilot spans all eight years and includes two Q3 2026 articles; complete pass running |
 
 Fed and ECB collection uses their article archives rather than economic-series SDKs. GDELT has a
 [MIT Python client](https://github.com/alex9smith/gdelt-doc-api), but this implementation uses its small REST
 endpoint directly. GDELT's article search is a recent, capped discovery feed; its URLs confer no publisher
 license. MediaWiki is queried directly to avoid an extra SDK dependency.
+GOV.UK explicitly supports its Content API but calls the Search API unsupported; saved discovery indexes
+make the cohort inspectable if that interface changes. Both are accessed directly without an additional SDK.
+HM Treasury articles are official announcements, not a substitute for independent financial journalism.
+Their Content API's original publication timestamp determines the date; articles publicly revised after
+that publication day are excluded because the original body is unavailable. Images and attachments are omitted.
 
 These sources are free to fetch, with different redistribution obligations. The collectors retain attribution
 and modification notices per row. A release and its covering filing share an event ID. Primary 6-Ks may be
@@ -44,9 +50,10 @@ text was available verbatim on its stated publication date. Pretrained-model exp
 Collection and the independent human audit remain unfinished. Dataset-size targets are ceilings, and source
 shortfalls will be recorded explicitly before model comparisons.
 
-The first complete news pass retained 83 Wikinews articles dated Jan 2019–Apr 2026, with no eligible VOA
-articles. A broader pass through two levels of financial/business subcategories is running before the news
-source is declared exhausted. The completed Fed corpus has 1,826 documents; ECB has 722. Data-PR CI lint,
+The broader news pass through two levels of financial/business subcategories is complete. Its 201 articles
+do not establish recent-news generalization: Wikinews contributes no Q3 2026 test rows, and no eligible VOA
+articles were found. HM Treasury extends the news family with official announcements; provider counts and
+metrics remain separate. The completed Fed corpus has 1,826 documents; ECB has 722. Data-PR CI lint,
 container build and container inference passed despite the unavailable local Docker daemon.
 
 Description-only release discovery overrepresented certain filing templates: SEC full-text results include
