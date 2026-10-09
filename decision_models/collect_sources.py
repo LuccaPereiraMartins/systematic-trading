@@ -365,7 +365,41 @@ def extract(http, candidate):
                            "attribution": source, "modification": "HTML navigation removed; plain-text extraction"}}
 
 
-def sec_documents(candidate, family):
+def resume_records(output):
+    if output.exists():
+        raw = output.read_bytes()
+        end = raw.rfind(b"\n") + 1
+        tail = raw[end:]
+        if tail:
+            try:
+                json.loads(tail)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                archive = output.with_name(output.name + f".interrupted-{time.time_ns()}")
+                archive.write_bytes(tail)
+                with output.open("r+b") as stream:
+                    stream.truncate(end)
+                print(f"Retained {len(tail)} interrupted append bytes in {archive.name}", flush=True)
+            else:
+                with output.open("ab") as stream:
+                    stream.write(b"\n")
+    return read_records(output)
+
+
+def sec_documents(candidate, family, http=None):
+    if family != "releases" and http is not None:
+        from edgar.attachments import Attachments, parse_homepage_html
+        directory = f"https://www.sec.gov/Archives/edgar/data/{int(candidate['issuer'])}/{candidate['accession'].replace('-', '')}/"
+        index_url = directory + candidate["accession"] + "-index.html"
+        try:
+            raw, metadata = http.get(index_url)
+        except requests.HTTPError as exc:
+            if exc.response.status_code not in (403, 404):
+                raise
+        else:
+            document = Attachments.load(parse_homepage_html(raw)).primary_html_document
+            if document and document.document_type == candidate["document_type"] and document.extension != ".paper":
+                return [{**candidate, "url": document.url,
+                         "primary_discovery": {"url": index_url, "raw_sha256": metadata["raw_sha256"]}}]
     from edgar import Filing
     filing = Filing(int(candidate["issuer"]), candidate["company"], candidate["document_type"],
                     candidate["date"], candidate["accession"])
@@ -395,9 +429,11 @@ def collect(family, number, start, end, output):
     datetime.strptime(start, "%Y-%m-%d")
     datetime.strptime(end, "%Y-%m-%d")
     output = Path(output)
+    if output.suffix != ".jsonl":
+        raise ValueError("Source collection requires a JSONL output")
     output.parent.mkdir(parents=True, exist_ok=True)
     http = HTTP(output.parent / "raw")
-    existing = read_records(output)
+    existing = resume_records(output)
     state_path, index_path = output.with_suffix(".state.json"), output.with_suffix(".index.json")
     state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {"processed": {}, "errors": []}
     settings = {"family": family, "start": start, "end": end,
@@ -431,6 +467,10 @@ def collect(family, number, start, end, output):
         save(candidates, index_path)
     candidates = balanced([r for r in candidates if r["date"]]) + [r for r in candidates if not r["date"]]
     state["indexed_candidates"] = len(candidates)
+    candidate_ids = {row["document_id"] for row in candidates}
+    for row in existing:
+        if row["document_id"] in candidate_ids:
+            state["processed"].setdefault(row["document_id"], "accepted")
     seen = {r.get("document_id") for r in existing}
     hashes = {body_hash(r) for r in existing}
     added = len(existing)
@@ -443,7 +483,7 @@ def collect(family, number, start, end, output):
             if added >= number:
                 break
             try:
-                documents = sec_documents(candidate, family) if candidate["source"] == "sec" and not candidate.get("url") else [candidate]
+                documents = sec_documents(candidate, family, http) if candidate["source"] == "sec" and not candidate.get("url") else [candidate]
                 accepted = 0
                 for document in documents:
                     if document["document_id"] in seen or added >= number:
