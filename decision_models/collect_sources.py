@@ -25,6 +25,7 @@ from schemas import HERE, body_hash, read_records, save
 
 FAMILIES = ("8k", "releases", "6k", "fed", "ecb", "news", "govuk")
 EXTRACTION_VERSION = "html-text-v1"
+RELEASE_QUERY = '"press release" OR "news release" OR "GLOBE NEWSWIRE" OR "PRNewswire"'
 RIGHTS = {
     "govuk": ("Crown copyright; Open Government Licence v3.0 except stated third-party/personal content",
               "https://www.gov.uk/help/reuse-govuk-content"),
@@ -159,7 +160,8 @@ def sec_candidates(family, start, end):
 
 def release_candidates(http, start, end):
     """Discover release exhibits by their text, avoiding attachment-description template bias."""
-    query = '("press release" OR "news release" OR "GLOBE NEWSWIRE" OR "PRNewswire")'
+    # EFTS treats grouping parentheses as required literal terms.
+    query = RELEASE_QUERY
     periods, items = [], {}
     first, final = date.fromisoformat(start), date.fromisoformat(end)
     while first <= final:
@@ -172,6 +174,8 @@ def release_candidates(http, start, end):
                       "forms": "8-K", "from": 0, "size": 100}
         root = "https://efts.sec.gov/LATEST/search-index?"
         result = http.json(root + urlencode(parameters))
+        if result.get("timed_out") or result.get("_shards", {}).get("failed", 0):
+            raise ValueError("SEC discovery returned incomplete search results")
         total = result["hits"]["total"]
         if total["relation"] != "eq" or total["value"] > 10_000:
             if first == last:
@@ -183,6 +187,9 @@ def release_candidates(http, start, end):
             parameters["from"] = offset
             discovery = root + urlencode(parameters)
             page = result if offset == 0 else http.json(discovery)
+            if (page.get("timed_out") or page.get("_shards", {}).get("failed", 0)
+                    or len(page["hits"]["hits"]) != min(100, total["value"] - offset)):
+                raise ValueError("SEC discovery returned an incomplete results page")
             for hit in page["hits"]["hits"]:
                 row = hit["_source"]
                 if not row.get("file_type", "").startswith("EX-99") or "8-K" not in row.get("root_forms", []):
@@ -194,6 +201,7 @@ def release_candidates(http, start, end):
                               "date": row["file_date"], "source": "sec", "document_type": "corporate_release",
                               "issuer": issuer, "accession": accession, "discovery_url": discovery,
                               "discovery_query": query, "attachment_description": row.get("file_description", "")}
+        print(f"Release discovery: {first}..{last}; {len(items)} unique exhibits", flush=True)
     return list(items.values())
 
 
@@ -394,6 +402,8 @@ def collect(family, number, start, end, output):
     state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {"processed": {}, "errors": []}
     settings = {"family": family, "start": start, "end": end,
                 "extraction": "govuk-json-text-v1" if family == "govuk" else EXTRACTION_VERSION}
+    if family == "releases":
+        settings["discovery_query"] = RELEASE_QUERY
     if state.get("settings", settings) != settings:
         raise ValueError("Collection settings changed; use a separate output")
     state["settings"] = settings
