@@ -195,5 +195,7 @@ to bound memory on very large documents. Labeling is followed by an explicit
 freeze; changed frozen outputs are rejected. Selection and calibration sets do not share related groups.
 Every selected validation/test document must be labeled before freezing. The manifest records queued,
 labeled and missing training counts, including missing-label families and errors if the budget limits training.
+Primary 8-Ks are capped at 40% of train, validation and test, both before labeling and on retained labels.
+Labels removed to preserve this share remain in their input queues, with excluded/retained counts in the manifest.
 Human-review forms hide model labels; conflicting double reviews stay unresolved. The review audit is not an
 expert assessment of investment usefulness.

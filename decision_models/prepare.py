@@ -103,6 +103,16 @@ def sample(rows, number=None, by_label=False):
     return ordered[:number] if number is not None else ordered
 
 
+def cap_primary(rows, by_label=False):
+    others = [row for row in rows if family(row) != "8k"]
+    primary = [row for row in rows if family(row) == "8k"]
+    # At most two primary filings per three other documents gives a 40% share.
+    if len(primary) * 3 <= len(others) * 2:
+        return rows
+    primary = sample(primary, len(others) * 2 // 3, by_label=by_label)
+    return sample(others + primary, by_label=by_label)
+
+
 def prepare(corpora, output, legacy=HERE / "data/dataset.json", validation=1200, test=1800, train=25000):
     from label import RUBRIC_HASH
     if (output / "manifest.json").exists():
@@ -152,19 +162,14 @@ def prepare(corpora, output, legacy=HERE / "data/dataset.json", validation=1200,
     maximums = {"train": train, "validation": validation, "test": test}
     details = {}
     for name in maximums:
-        chosen = sample(selected[name], maximums[name])
-        # Primary 8-Ks cannot consume a mixed corpus merely because they are easy to acquire.
-        if name == "train":
-            others = [r for r in chosen if family(r) != "8k"]
-            primary = [r for r in chosen if family(r) == "8k"][:int(len(others) * 2 / 3)]
-            chosen = sample(others + primary)
+        chosen = cap_primary(sample(selected[name], maximums[name]))
         write_records(chosen, output / f"{name}-input.jsonl")
         details[name] = {"available": len(selected[name]), "chosen": len(chosen),
                          "families": dict(Counter(family(r) for r in chosen)),
                          "labeled": sum(annotation(r)["label"] is not None for r in chosen)}
     save({"cutoffs": CUTOFFS, "near_duplicate_threshold": NEAR_THRESHOLD, "candidate_threshold": SEARCH_THRESHOLD,
           "rubric_sha256": RUBRIC_HASH,
-          "num_perm": PERMUTATIONS,
+          "num_perm": PERMUTATIONS, "primary_8k_share_cap": 0.4,
           "inputs": {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in [*corpora, legacy]},
           "census": census, "excluded": dict(excluded),
           "exclusions_by_family": {name: dict(counts) for name, counts in exclusions_by_family.items()},
@@ -184,17 +189,21 @@ def freeze(output):
         coverage[name] = {"queued": len(inputs), "labeled": len(labeled), "unlabeled": len(missing),
                           "unlabeled_by_family": dict(Counter(family(row) for row in missing)),
                           "unlabeled_errors": dict(Counter(row.get("label_error", {}).get("type", "Not labeled") for row in missing))}
+        if name != "train" and missing:
+            raise ValueError(f"Complete all selected {name} labels before freezing; {len(missing)} remain")
+        if any(row["human"]["label"] is None and prepared.get("rubric_sha256") and
+               row["llm"].get("rubric_sha256") != prepared["rubric_sha256"] for row in labeled):
+            raise ValueError("Teacher labels must use the prepared benchmark's rubric")
+        # Missing training labels can change the source mix; retain the cap after labeling.
+        retained = cap_primary(labeled, by_label=name == "train")
+        coverage[name].update(retained=len(retained), excluded_8k_share=len(labeled) - len(retained))
+        labeled = retained
         teacher = [row["llm"] for row in labeled if row["llm"]["label"] is not None and
                    row["llm"].get("rubric_sha256") == prepared.get("rubric_sha256")]
         known_costs = [label["estimated_cost_usd"] for label in teacher if label.get("estimated_cost_usd") is not None]
         coverage[name]["successful_teacher_labels"] = len(teacher)
         coverage[name]["teacher_cost_usd"] = sum(known_costs)
         coverage[name]["teacher_cost_unavailable"] = len(teacher) - len(known_costs)
-        if name != "train" and missing:
-            raise ValueError(f"Complete all selected {name} labels before freezing; {len(missing)} remain")
-        if any(row["human"]["label"] is None and prepared.get("rubric_sha256") and
-               row["llm"].get("rubric_sha256") != prepared["rubric_sha256"] for row in labeled):
-            raise ValueError("Teacher labels must use the prepared benchmark's rubric")
         if not labeled:
             raise ValueError(f"No labeled {name} documents")
         groups[name] = sorted(labeled, key=lambda r: (r["date"], body_hash(r)))

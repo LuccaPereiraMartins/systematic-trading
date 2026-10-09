@@ -66,6 +66,8 @@ four differ on a thin 6-K cover sheet, administrative amendments, a director app
 statistical release. The reviewer explicitly cautioned that the exercise was difficult. Answers and
 their source mapping are preserved locally as rubric feedback; they do not override dataset labels
 or provide held-out accuracy evidence. These cases need interpretation before changing the rubric.
+The reviewer subsequently identified themselves as a non-analyst and preferred Luna as the labeller.
+The existing rubric and Luna reference labels remain in place; this pilot informs task clarity rather than expert accuracy.
 
 The 25,000-document 6-K target is complete; release and primary 8-K collection remain in progress.
 Source-date, language, required provenance and body/raw-response hash checks passed on all 29,006
