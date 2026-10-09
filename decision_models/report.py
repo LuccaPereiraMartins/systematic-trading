@@ -3,6 +3,7 @@
 from collections import defaultdict
 from importlib.metadata import version
 import json
+from pathlib import Path
 import re
 import subprocess
 from xml.sax.saxutils import escape
@@ -53,6 +54,27 @@ def human_audit(path, records, predictions, reference):
             "teacher_agreement": sum(truth[k] == value for k, value in labels.items()) / len(labels) if labels else None,
             "models": {name: breakdown(rows) for name, rows in subset.items()},
             "bootstrap": bootstrap(subset, reference) if labels else None}
+
+
+def corpus_tables(prepared):
+    parts = []
+    if prepared.get("census"):
+        parts += [table(["Input", "Raw documents", "Family / provider", "Publication range"],
+                        [[Path(row["input"]).name + (" (legacy)" if row["legacy"] else ""), row["rows"],
+                          ", ".join(row["families"]) + " / " + ", ".join(row["providers"]),
+                          f"{row['start']} to {row['end']}"] for row in prepared["census"]]),
+                  "Raw acquisition counts precede duplicate quarantine, sampling and labeling. Legacy inputs were previously "
+                  "experimented on and are eligible only for training."]
+    if prepared.get("exclusions_by_family"):
+        parts += [table(["Family", "Exclusion reason", "Documents"],
+                        [[name, reason.replace("_", " "), count]
+                         for name, counts in prepared["exclusions_by_family"].items() for reason, count in counts.items()])]
+    if prepared.get("partitions"):
+        parts += [table(["Partition", "Available after exclusions", "Selected before labeling"],
+                        [[name, counts["available"], counts["chosen"]] for name, counts in prepared["partitions"].items()]),
+                  "Selection applies the recorded split ceilings and training 8-K share cap; these counts are distinct "
+                  "from labeled support below."]
+    return parts
 
 
 def reference_quote(records):
@@ -274,6 +296,7 @@ def build(splits, study, human=None):
     if "synthetic" in freeze["manifest"]["prepared"].get("method", "").lower():
         parts.insert(1, "Synthetic engineering fixture: this document verifies the pipeline and contains no research findings.")
     manifest = freeze["manifest"]["splits"]
+    parts += corpus_tables(freeze["manifest"]["prepared"])
     families = sorted(set.union(*[set(v.get("families", {})) for v in manifest.values()]))
     parts += [table(["Family", "Train", "Selection", "Calibration", "Test"],
                     [[f, *[manifest[n].get("families", {}).get(f, 0) for n in ("train", "selection", "calibration", "test")]] for f in families]),
