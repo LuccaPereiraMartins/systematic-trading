@@ -2,12 +2,15 @@
 
 import argparse
 from collections import Counter, defaultdict
+from contextlib import ExitStack, closing
 from datetime import date
 import hashlib
+from importlib.metadata import version
 from itertools import zip_longest
 import json
 from pathlib import Path
 import re
+import sqlite3
 
 from datasketch import MinHash, MinHashLSH
 
@@ -32,7 +35,49 @@ def shingle_set(body):
     return {" ".join(tokens[i:i + 5]).encode() for i in range(max(1, len(tokens) - 4))}
 
 
-def cluster(rows, legacy_hashes):
+def legacy_links(rows, corpora, legacy_hashes):
+    """Recognise prior 8-Ks in the SDK's text format using retained HTML, without changing model inputs."""
+    from bs4 import UnicodeDammit
+    from edgar._filings import HTMLParser, ParserConfig
+
+    caches = sorted({directory for path in corpora for directory in (path.parent / "raw", path.parent.parent / "pilot/raw")})
+    aliases = defaultdict(set)
+    audit = {"method": "Exact legacy body SHA from offline edgartools primary-HTML reconstruction",
+             "sdk_version": version("edgartools"), "attempted": 0, "matched_documents": 0, "matches": []}
+    with ExitStack() as stack:
+        databases = [stack.enter_context(closing(sqlite3.connect((directory / "responses.sqlite").resolve().as_uri() + "?mode=ro", uri=True)))
+                     for directory in caches if (directory / "responses.sqlite").exists()]
+        for row in rows:
+            provenance = row.get("provenance", {})
+            if family(row) != "8k" or not row.get("document_id") or not provenance.get("raw_sha256"):
+                continue  # Legacy records and minimal fixtures have no retained response to reconstruct.
+            url, expected = provenance["url"], provenance["raw_sha256"]
+            responses = [db.execute("SELECT body,metadata FROM responses WHERE url=?", (url,)).fetchone() for db in databases]
+            key = hashlib.sha256(url.encode()).hexdigest()
+            for directory in caches:
+                raw, metadata = directory / f"{key}.bin", directory / f"{key}.json"
+                if raw.exists() and metadata.exists():
+                    responses.append((raw.read_bytes(), metadata.read_text(encoding="utf-8")))
+            raw = next((value[0] for value in responses if value and
+                        hashlib.sha256(value[0]).hexdigest() == expected == json.loads(value[1])["raw_sha256"]), None)
+            if raw is None:
+                raise ValueError(f"Missing or changed retained HTML for legacy reconstruction: {row['document_id']}")
+            document = HTMLParser(ParserConfig(form="8-K")).parse(UnicodeDammit(raw).unicode_markup)
+            restored = document.text(table_max_col_width=500, include_images=False).strip()
+            previous = body_hash({"body": restored})
+            audit["attempted"] += 1
+            if previous in legacy_hashes:
+                digest = body_hash(row)
+                aliases[digest].add(previous)
+                audit["matched_documents"] += 1
+                audit["matches"].append({"document_id": row["document_id"], "body_sha256": digest,
+                                         "legacy_body_sha256": previous, "raw_sha256": expected})
+            if audit["attempted"] % 1000 == 0:
+                print(f"Legacy extraction check: {audit['attempted']} primary filings", flush=True)
+    return aliases, audit
+
+
+def cluster(rows, legacy_hashes, aliases=None):
     parents = list(range(len(rows)))
 
     def root(i):
@@ -71,6 +116,9 @@ def cluster(rows, legacy_hashes):
                 events[event] = i
         if (i + 1) % 1000 == 0:
             print(f"Duplicate audit: {i + 1}/{len(rows)}", flush=True)
+    for digest, previous in (aliases or {}).items():
+        for legacy in previous:
+            join(hashes[digest], hashes[legacy])
     members = defaultdict(list)
     for i in range(len(rows)):
         members[root(i)].append(i)
@@ -134,7 +182,9 @@ def prepare(corpora, output, legacy=HERE / "data/dataset.json", validation=1200,
     for row in rows:
         if date.fromisoformat(row["date"]).isoformat() != row["date"]:
             raise ValueError("Every row needs an ISO publication date")
-    groups = cluster(rows, {body_hash(row) for row in legacy_rows})
+    legacy_hashes = {body_hash(row) for row in legacy_rows}
+    aliases, legacy_audit = legacy_links(rows, corpora, legacy_hashes)
+    groups = cluster(rows, legacy_hashes, aliases)
     group_partitions = defaultdict(set)
     for i, row in enumerate(rows):
         group_partitions[groups[i][0]].add(partition(row["date"]))
@@ -171,6 +221,7 @@ def prepare(corpora, output, legacy=HERE / "data/dataset.json", validation=1200,
           "rubric_sha256": RUBRIC_HASH,
           "num_perm": PERMUTATIONS, "primary_8k_share_cap": 0.4,
           "inputs": {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in [*corpora, legacy]},
+          "legacy_extraction_check": legacy_audit,
           "census": census, "excluded": dict(excluded),
           "exclusions_by_family": {name: dict(counts) for name, counts in exclusions_by_family.items()},
           "partitions": details,
