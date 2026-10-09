@@ -184,6 +184,12 @@ def freeze(output):
         coverage[name] = {"queued": len(inputs), "labeled": len(labeled), "unlabeled": len(missing),
                           "unlabeled_by_family": dict(Counter(family(row) for row in missing)),
                           "unlabeled_errors": dict(Counter(row.get("label_error", {}).get("type", "Not labeled") for row in missing))}
+        teacher = [row["llm"] for row in labeled if row["llm"]["label"] is not None and
+                   row["llm"].get("rubric_sha256") == prepared.get("rubric_sha256")]
+        known_costs = [label["estimated_cost_usd"] for label in teacher if label.get("estimated_cost_usd") is not None]
+        coverage[name]["successful_teacher_labels"] = len(teacher)
+        coverage[name]["teacher_cost_usd"] = sum(known_costs)
+        coverage[name]["teacher_cost_unavailable"] = len(teacher) - len(known_costs)
         if name != "train" and missing:
             raise ValueError(f"Complete all selected {name} labels before freezing; {len(missing)} remain")
         if any(row["human"]["label"] is None and prepared.get("rubric_sha256") and
