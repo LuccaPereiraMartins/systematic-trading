@@ -247,7 +247,11 @@ and rank-8 LoRA runs use at most three epochs, gradient accumulation across eigh
 optimizer/RNG state. Context or subset changes are rejected on resume. SDK reference predictions checkpoint
 after each document. No research training entry point reads test.
 Whole window batches are recomputed during backward passes to bound retained activations on long documents.
-Dropout RNG is preserved; pooling and the document-level loss remain unchanged.
+The outer window checkpoint runs without a forward graph so nested model checkpoints cannot retain
+large attention masks for every window. An empty grad-enabled input supports integer token IDs;
+inner checkpoints remain non-reentrant. The training loop uses the supported `loss.backward()` path.
+Dropout RNG is preserved; pooling and the document-level loss remain unchanged. See
+[PyTorch's checkpoint API](https://docs.pytorch.org/docs/2.14/checkpoint.html) for the reentrant API limits.
 
 `modernbert` adds an [Apache-2.0 ModernBERT-large](https://huggingface.co/answerdotai/ModernBERT-large) architecture
 control pinned to revision `45bb4654a4d5aaff24dd11d4781fa46d39bf8c13`. Its head/LoRA comparisons use the same
