@@ -23,9 +23,11 @@ import requests
 from schemas import HERE, body_hash, read_records, save
 
 
-FAMILIES = ("8k", "releases", "6k", "fed", "ecb", "news")
+FAMILIES = ("8k", "releases", "6k", "fed", "ecb", "news", "govuk")
 EXTRACTION_VERSION = "html-text-v1"
 RIGHTS = {
+    "govuk": ("Crown copyright; Open Government Licence v3.0 except stated third-party/personal content",
+              "https://www.gov.uk/help/reuse-govuk-content"),
     "sec": ("SEC public filing reuse", "https://www.sec.gov/files/about/webmaster-faq.htm"),
     "fed": ("Public domain unless otherwise indicated", "https://www.federalreserve.gov/disclaimer.htm"),
     "ecb": ("ECB institutional information: attribution and accuracy conditions",
@@ -92,6 +94,55 @@ def balanced(items):
     groups = [sorted(months[m], key=lambda r: hashlib.sha256(r["document_id"].encode()).hexdigest())
               for m in sorted(months, key=lambda month: hashlib.sha256(month.encode()).hexdigest())]
     return [r for group in zip_longest(*groups) for r in group if r is not None]
+
+
+def govuk_candidates(http, start, end):
+    """HM Treasury news/press releases; unsupported search API is discovery only."""
+    rows, offset = [], 0
+    while True:
+        parameters = [("filter_organisations", "hm-treasury"), ("filter_format", "press_release"),
+                      ("filter_format", "news_story"), ("fields", "title,link,public_timestamp,format"),
+                      ("count", 1000), ("start", offset), ("order", "-public_timestamp")]
+        url = "https://www.gov.uk/api/search.json?" + urlencode(parameters)
+        payload = http.json(url)
+        for item in payload["results"]:
+            day = item.get("public_timestamp", "")[:10]
+            if start <= day <= end:
+                rows.append({"document_id": "govuk:" + item["link"], "event_id": "govuk:" + item["link"],
+                             "source": "govuk", "document_type": "news", "date": day,
+                             "url": "https://www.gov.uk" + item["link"], "title": item["title"],
+                             "content_api_url": "https://www.gov.uk/api/content" + item["link"],
+                             "discovery_url": url, "publisher": "HM Treasury"})
+        offset += len(payload["results"])
+        if offset >= payload["total"]:
+            return rows
+        if not payload["results"]:
+            raise ValueError("GOV.UK discovery stopped before its reported total")
+
+
+def govuk_document(http, candidate):
+    raw, metadata = http.get(candidate["content_api_url"])
+    content = json.loads(raw)
+    if content["locale"] != "en" or content["document_type"] not in ("news_story", "press_release"):
+        raise ValueError("Not an English official news article")
+    published, updated = content["first_published_at"], content["public_updated_at"]
+    day = datetime.fromisoformat(published).astimezone(timezone.utc).date().isoformat()
+    changed = datetime.fromisoformat(updated).astimezone(timezone.utc).date().isoformat()
+    if changed > day:
+        raise ValueError("Public revision after original publication day; historical body unavailable")
+    page = BeautifulSoup(content["details"]["body"], "html.parser")
+    for node in page.select("img, script, style"):
+        node.decompose()
+    body = content["title"] + "\n" + page.get_text("\n", strip=True)
+    if len(body) < 100 or re.search(r"copyright|third[- ]party content|all rights reserved", body, re.I):
+        raise ValueError("Insufficient text or special-rights notice")
+    return {**candidate, "date": day, "body": body, "llm": {"label": None, "uncertainty": None},
+            "human": {"label": None, "uncertainty": None}, "date_precision": "day",
+            "provenance": {**metadata, "content_id": content["content_id"], "published_at": published,
+                           "public_updated_at": updated, "extraction_version": "govuk-json-text-v1",
+                           "rights": RIGHTS["govuk"][0], "rights_url": RIGHTS["govuk"][1],
+                           "attribution": "Contains public sector information licensed under the Open Government Licence v3.0; HM Treasury",
+                           "modification": "Title and article text extracted; HTML, images and attachments excluded"}}
 
 
 def sec_candidates(family, start, end):
@@ -341,7 +392,8 @@ def collect(family, number, start, end, output):
     existing = read_records(output)
     state_path, index_path = output.with_suffix(".state.json"), output.with_suffix(".index.json")
     state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {"processed": {}, "errors": []}
-    settings = {"family": family, "start": start, "end": end, "extraction": EXTRACTION_VERSION}
+    settings = {"family": family, "start": start, "end": end,
+                "extraction": "govuk-json-text-v1" if family == "govuk" else EXTRACTION_VERSION}
     if state.get("settings", settings) != settings:
         raise ValueError("Collection settings changed; use a separate output")
     state["settings"] = settings
@@ -360,6 +412,8 @@ def collect(family, number, start, end, output):
             candidates = fed_candidates(http, start, end)
         elif family == "ecb":
             candidates = ecb_candidates(http, start, end)
+        elif family == "govuk":
+            candidates = govuk_candidates(http, start, end)
         else:
             candidates, errors = news_candidates(http, start, end)
             state["errors"].extend(errors)
@@ -384,7 +438,7 @@ def collect(family, number, start, end, output):
                 for document in documents:
                     if document["document_id"] in seen or added >= number:
                         continue
-                    row = extract(http, document)
+                    row = govuk_document(http, document) if document["source"] == "govuk" else extract(http, document)
                     if not start <= row["date"] <= end:
                         continue
                     language, probability = worker.submit(identifier.classify, row["body"]).result()
