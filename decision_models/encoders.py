@@ -106,7 +106,8 @@ class EncoderModel(nn.Module):
     def window_features(self, ids, mask):
         hidden = self.encoder(input_ids=ids, attention_mask=mask).last_hidden_state
         if self.kind == "bge":
-            return hidden[:, 0].float()
+            # A CLS view can keep the entire token-state buffer alive across windows.
+            return hidden[:, 0].float().clone()
         return (hidden.float() * mask[:, :, None]).sum(1) / mask.sum(1)[:, None]
 
     def embed(self, body):

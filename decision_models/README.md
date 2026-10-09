@@ -259,6 +259,7 @@ large attention masks for every window. An empty grad-enabled input supports int
 inner checkpoints remain non-reentrant. The training loop uses the supported `loss.backward()` path.
 Dropout RNG is preserved; pooling and the document-level loss remain unchanged. See
 [PyTorch's checkpoint API](https://docs.pytorch.org/docs/2.14/checkpoint.html) for the reentrant API limits.
+BGE CLS vectors use compact copies so retained window outputs cannot keep full token-state buffers alive.
 
 `modernbert` adds an [Apache-2.0 ModernBERT-large](https://huggingface.co/answerdotai/ModernBERT-large) architecture
 control pinned to revision `45bb4654a4d5aaff24dd11d4781fa46d39bf8c13`. Its head/LoRA comparisons use the same
