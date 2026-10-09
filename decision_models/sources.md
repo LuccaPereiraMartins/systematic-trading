@@ -29,8 +29,12 @@ and modification notices per row. A release and its covering filing share an eve
 short cover sheets whose substance resides in an uncollected exhibit: this is visible source content and can
 legitimately be unclear. It must be measured rather than silently filled with external context.
 
+SEC document dates are filing dates from the SEC index, including dates of filings that carry release
+exhibits. They establish EDGAR disclosure dates, not the earliest publication elsewhere: the Armlogi
+pilot release is dated January 14 in its text and January 15 in its covering filing. Other source dates
+come from original article dates or publication metadata; discovery times are never substituted.
+Temporal splits use these recorded document dates, with day precision and the stated availability limits.
 The news sample is a constrained public corpus, not a representative commercial financial-news feed.
-Publication timestamps must come from the article itself; discovery times are never used in their place.
 Historical archive pages can change after publication, so retrieval snapshots do not prove that the extracted
 text was available verbatim on its stated publication date. Pretrained-model exposure remains possible.
 
