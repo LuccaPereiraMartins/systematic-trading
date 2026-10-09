@@ -86,7 +86,7 @@ class Budget:
 
 def reservation(body):
     # UTF-8 bytes bound input token count even if model tokenisation changes.
-    count = len(tiktoken.get_encoding("o200k_base").encode(RUBRIC + body))
+    count = len(tiktoken.get_encoding("o200k_base").encode(RUBRIC + body, disallowed_special=()))
     bound = len((RUBRIC + body).encode()) + 2048
     rate = RATES["input"] * (2 if bound > 272_000 else 1)
     output_rate = RATES["output"] * (1.5 if bound > 272_000 else 1)

@@ -193,5 +193,7 @@ candidate search uses a lower .80 threshold; merges require verified five-word-s
 at least .90. Candidate retrieval remains approximate and can miss near duplicates. Hash updates are batched
 to bound memory on very large documents. Labeling is followed by an explicit
 freeze; changed frozen outputs are rejected. Selection and calibration sets do not share related groups.
+Every selected validation/test document must be labeled before freezing. The manifest records queued,
+labeled and missing training counts, including missing-label families and errors if the budget limits training.
 Human-review forms hide model labels; conflicting double reviews stay unresolved. The review audit is not an
 expert assessment of investment usefulness.
