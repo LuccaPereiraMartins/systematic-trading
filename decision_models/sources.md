@@ -71,3 +71,7 @@ major-company release exhibits whose descriptions contain only EX-99.1. Release 
 full-text press/news-release and distribution-wire markers, filtered to EX-99 exhibits. Queries are split by
 month and further subdivided rather than silently truncating capped searches. This is a reproducible query
 cohort, not a census of every corporate release. The earlier pilot remains recorded as an extraction check.
+The initial grouped OR query returned zero: EFTS interpreted its parentheses as required literal terms.
+The corrected ungrouped query returned 4,896 January 2019 hits, including EX-99 exhibits. The empty index
+and original responses are retained as failed discovery evidence; the corrected query is bound to collection
+settings. Search timeouts, shard failures and incomplete pages reject an index rather than hiding shortfalls.
