@@ -133,6 +133,8 @@ def breakdown(rows):
     return {"overall": metrics(rows),
             "by_family": {key: metrics([r for r in rows if r["family"] == key])
                           for key in sorted({r["family"] for r in rows})},
+            "by_source": {key: metrics([r for r in rows if r["source"] == key])
+                          for key in sorted({r["source"] for r in rows})},
             "by_reference_source": {key: metrics([r for r in rows if r["reference_source"] == key])
                                     for key in sorted({r["reference_source"] for r in rows})}}
 

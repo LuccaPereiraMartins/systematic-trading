@@ -295,6 +295,10 @@ def build(splits, study, human=None):
                     [[label(configs[n]), family, value['count'], number(value['macro_f1']),
                       value['default_discard']['review_worthy_support'], value['default_discard']['dangerous_misses']]
                      for n in (primary, reference) for family, value in breakdown(predictions[n])['by_family'].items()]),
+              table(["Model", "Provider", "Documents", "Macro F1", "Review support", "Misses"],
+                    [[label(configs[n]), source, value['count'], number(value['macro_f1']),
+                      value['default_discard']['review_worthy_support'], value['default_discard']['dangerous_misses']]
+                     for n in (primary, reference) for source, value in breakdown(predictions[n])['by_source'].items()]),
               table(["Model", "Log loss", "ECE (10 bins)", "Median uncertainty"],
                     [[label(configs[n]), number(scored[n]['log_loss']), number(scored[n]['ece_10_bins']),
                       number(float(np.median([r['uncertainty'] for r in predictions[n]])))] for n in names]),
@@ -302,6 +306,18 @@ def build(splits, study, human=None):
               "of investment materiality; teacher self-reported uncertainty is retained separately. Class support must be read "
               "beside small-slice macro F1. When no misses are observed, bootstrap resampling cannot reveal unseen errors.",
               "", "## Discard policies", ""]
+    source_counts = {}
+    for split in ("train", "selection", "calibration", "test"):
+        counts = defaultdict(int)
+        for row in load_split(splits, split):
+            counts[row.get("source", "sec")] += 1
+        source_counts[split] = counts
+    providers = sorted(set.union(*[set(counts) for counts in source_counts.values()]))
+    parts.insert(parts.index("## Model comparisons") - 1,
+                 table(["Provider", "Train", "Selection", "Calibration", "Test"],
+                       [[source, *[source_counts[split][source] for split in source_counts]] for source in providers]) +
+                 "\n\nThe news family can contain official financial announcements as well as Wikinews. "
+                 "Provider coverage is reported separately; official announcements do not establish commercial-journalism generalization.")
     policy_rows = []
     for n in names:
         for key, value in scored[n]["policies"].items():
