@@ -454,6 +454,18 @@ def build(splits, study, human=None):
                  "Original weights are cached pretrained input files, including unquantized Qwen weights, not packed deployment size. "
                  "Saved checkpoints may include optimizer/RNG state. Peak VRAM is torch-allocated memory, excluding driver/display overhead; "
                  "the latency table reports inference peak, with training peak listed separately.")
+    features = [(name, configs[name]["feature_preparation"]) for name in names if configs[name].get("feature_preparation")]
+    if features:
+        parts.insert(parts.index("## Critical-error inspection") - 1,
+                     table(["Model", "Feature documents", "Recorded compute s", "Feature peak GiB", "Cache reused"],
+                           [[label(configs[name]), sum(v['documents'] for v in values.values()),
+                             number(sum(v['recorded_compute_seconds'] for v in values.values()), 1),
+                             number(max(v['peak_vram_bytes'] for v in values.values()) / 2**30, 2),
+                             sum(v['reused'] for v in values.values())] for name, values in features]) +
+                     "\n\nFrozen-feature counts include train, selection and calibration. Recorded compute sums each requested "
+                     "document's original preprocessing/encoder time under the pinned recipe; it excludes model loading and "
+                     "cache I/O. Cached rows retain this measurement when reused across sample sizes. Fit elapsed includes "
+                     "only preparation performed during that fit. These timings describe the shared machine, not a new cold run.")
     by_hash = {body_hash(r): r for r in records}
     misses = sorted([r for r in predictions[primary] if r['reference'] == 'review_worthy' and r['prediction'] == 'routine'],
                     key=lambda r: r['probabilities'][0], reverse=True)[:8]
