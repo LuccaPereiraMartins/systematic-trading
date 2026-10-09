@@ -14,7 +14,7 @@ import sqlite3
 
 from datasketch import MinHash, MinHashLSH
 
-from schemas import HERE, annotation, body_hash, read_records, save, write_records
+from schemas import HERE, annotation, body_hash, file_hash, read_records, save, write_records
 
 
 PERMUTATIONS = 128
@@ -77,7 +77,7 @@ def legacy_links(rows, corpora, legacy_hashes):
     return aliases, audit
 
 
-def cluster(rows, legacy_hashes, aliases=None):
+def cluster(rows, legacy_hashes, aliases=None, event_aliases=None):
     parents = list(range(len(rows)))
 
     def root(i):
@@ -119,6 +119,9 @@ def cluster(rows, legacy_hashes, aliases=None):
     for digest, previous in (aliases or {}).items():
         for legacy in previous:
             join(hashes[digest], hashes[legacy])
+    for event, previous in (event_aliases or {}).items():
+        if event in events:
+            join(events[event], hashes[previous])
     members = defaultdict(list)
     for i in range(len(rows)):
         members[root(i)].append(i)
@@ -161,7 +164,7 @@ def cap_primary(rows, by_label=False):
     return sample(others + primary, by_label=by_label)
 
 
-def prepare(corpora, output, legacy=HERE / "data/dataset.json", validation=1200, test=1800, train=25000):
+def prepare(corpora, output, legacy=HERE / "data/dataset.json", validation=1200, test=1800, train=25000, legacy_events=None):
     from label import RUBRIC_HASH
     if (output / "manifest.json").exists():
         raise ValueError("Benchmark is frozen; use another output directory")
@@ -183,8 +186,17 @@ def prepare(corpora, output, legacy=HERE / "data/dataset.json", validation=1200,
         if date.fromisoformat(row["date"]).isoformat() != row["date"]:
             raise ValueError("Every row needs an ISO publication date")
     legacy_hashes = {body_hash(row) for row in legacy_rows}
+    event_aliases, event_audit = {}, None
+    evidence = []
+    if legacy_events is not None:
+        from legacy_events import load
+        event_aliases, event_audit = load(legacy_events, legacy)
+        evidence = [legacy_events, legacy_events.parent / "submissions.sqlite"]
+        matched = [row for row in rows if row.get("event_id") in event_aliases]
+        event_audit.update(matched_source_rows=len(matched),
+                           matched_families=dict(Counter(family(row) for row in matched)))
     aliases, legacy_audit = legacy_links(rows, corpora, legacy_hashes)
-    groups = cluster(rows, legacy_hashes, aliases)
+    groups = cluster(rows, legacy_hashes, aliases, event_aliases)
     group_partitions = defaultdict(set)
     for i, row in enumerate(rows):
         group_partitions[groups[i][0]].add(partition(row["date"]))
@@ -220,8 +232,9 @@ def prepare(corpora, output, legacy=HERE / "data/dataset.json", validation=1200,
     save({"cutoffs": CUTOFFS, "near_duplicate_threshold": NEAR_THRESHOLD, "candidate_threshold": SEARCH_THRESHOLD,
           "rubric_sha256": RUBRIC_HASH,
           "num_perm": PERMUTATIONS, "primary_8k_share_cap": 0.4,
-          "inputs": {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in [*corpora, legacy]},
+          "inputs": {str(p): file_hash(p) for p in [*corpora, legacy, *evidence]},
           "legacy_extraction_check": legacy_audit,
+          "legacy_event_check": event_audit,
           "census": census, "excluded": dict(excluded),
           "exclusions_by_family": {name: dict(counts) for name, counts in exclusions_by_family.items()},
           "partitions": details,
@@ -299,6 +312,8 @@ if __name__ == "__main__":
     parser.add_argument("--corpora", type=Path, nargs="*")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--legacy", type=Path, default=HERE / "data/dataset.json")
+    parser.add_argument("--legacy-events", type=Path, default=HERE / "data/research/legacy-events/events.json",
+                        help="Verified old filing registry; links release-only candidates to prior experiments")
     parser.add_argument("--validation", type=int, default=1200)
     parser.add_argument("--test", type=int, default=1800)
     parser.add_argument("--train", type=int, default=25000)
@@ -307,6 +322,6 @@ if __name__ == "__main__":
     if args.freeze:
         freeze(args.output)
     elif args.corpora:
-        prepare(args.corpora, args.output, args.legacy, args.validation, args.test, args.train)
+        prepare(args.corpora, args.output, args.legacy, args.validation, args.test, args.train, args.legacy_events)
     else:
         parser.error("Supply --corpora or --freeze")

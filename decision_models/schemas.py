@@ -83,6 +83,11 @@ def body_hash(record):
     return hashlib.sha256(record["body"].encode()).hexdigest()
 
 
+def file_hash(path):
+    with Path(path).open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
 def read_records(path):
     """Read the legacy JSON array or a resumable JSONL corpus without dropping metadata."""
     path = Path(path)

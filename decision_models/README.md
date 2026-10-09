@@ -147,8 +147,10 @@ The [approved research programme](research.md) defines five dependent PRs. New i
 ```bash
 # Pilot each of 8k / releases / 6k / fed / ecb / news / govuk before scaling its target.
 python decision_models/collect_sources.py --family fed --number 50 --output decision_models/data/research/pilot/fed.jsonl
+# Recover old filing identities from the retained SDK cache before adding release exhibits.
+python decision_models/legacy_events.py
 # Prepare independently collected inputs; legacy rows are allowed in training only.
-python decision_models/prepare.py --corpora decision_models/data/research/corpus/fed.jsonl decision_models/data/research/corpus/6k.jsonl --output decision_models/data/research/benchmark
+python decision_models/prepare.py --corpora decision_models/data/research/corpus/fed.jsonl decision_models/data/research/corpus/6k.jsonl --legacy-events decision_models/data/research/legacy-events/events.json --output decision_models/data/research/benchmark
 # Label validation/test first, then training, all against ONE shared $3 ceiling.
 python decision_models/label.py --dataset decision_models/data/research/benchmark/validation-input.jsonl
 python decision_models/label.py --dataset decision_models/data/research/benchmark/test-input.jsonl
@@ -177,7 +179,8 @@ HM Treasury news uses the GOV.UK Content API under its [reuse policy](https://ww
 Articles revised after their original publication day are excluded. Official announcements and Wikinews share
 the news family, with provider counts and metrics reported separately; journalism coverage remains limited.
 Corporate-release discovery uses SEC full-text matches for press/news releases and distribution-wire markers,
-then retains EX-99 exhibits. Monthly queries are subdivided when the search cap is reached. This avoids the
+then retains EX-99 exhibits. Monthly queries are subdivided when the search cap is reached or a server
+error persists after request retries. Single-day failures still reject discovery. This avoids the
 initial description-only pilot's issuer/template bias, but remains a query-defined release cohort.
 
 Luna Flex labeling records response IDs, rubric/model provenance, token usage and charges. Its shared ledger
@@ -197,6 +200,12 @@ Primary 8-K HTML is also reconstructed offline with the pinned edgartools text f
 to an old body joins its group even when extraction differences fall below the shingle threshold; the link
 also reaches related release exhibits through event IDs. The prepared manifest records reconstruction
 version, counts and body/raw hashes. Canonical model inputs remain unchanged; retained raw caches are required.
+The legacy event registry also identifies release-only candidates whose parent 8-K is absent from the new
+sample. Recovery requires an exact old-body hash from the retained SDK submission or its retained primary
+responses; XML/text-extract handling and any complete primary before a truncated trailing attachment are
+recorded explicitly. Preparation independently reconstructs every registered event and requires complete
+old-body coverage, matching archive/SDK versions and unchanged evidence. Preserve `events.json` and
+`submissions.sqlite` with the corpus. Large evidence files are hashed as streams.
 Every selected validation/test document must be labeled before freezing. The manifest records queued,
 labeled and missing training counts, including missing-label families and errors if the budget limits training.
 Primary 8-Ks are capped at 40% of train, validation and test, both before labeling and on retained labels.
