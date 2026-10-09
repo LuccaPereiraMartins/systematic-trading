@@ -145,7 +145,7 @@ The [approved research programme](research.md) defines five dependent PRs. New i
 `data/research/`; the original 10,000-row archive and its splits remain unchanged.
 
 ```bash
-# Pilot each of 8k / releases / 6k / fed / ecb / news before scaling its target.
+# Pilot each of 8k / releases / 6k / fed / ecb / news / govuk before scaling its target.
 python decision_models/collect_sources.py --family fed --number 50 --output decision_models/data/research/pilot/fed.jsonl
 # Prepare independently collected inputs; legacy rows are allowed in training only.
 python decision_models/prepare.py --corpora decision_models/data/research/corpus/fed.jsonl decision_models/data/research/corpus/6k.jsonl --output decision_models/data/research/benchmark
@@ -173,6 +173,9 @@ ECB author-named documents are excluded. News collection accepts
 [Wikinews text](https://en.wikinews.org/wiki/Wikinews:Copyright) with its publication-date-specific CC BY license.
 GDELT discovers links; it grants no publisher-content license. Only article text is retained, not image assets.
 Wikinews discovery includes two levels of financial/business subcategories, with deduplicated page identities.
+HM Treasury news uses the GOV.UK Content API under its [reuse policy](https://www.gov.uk/help/reuse-govuk-content).
+Articles revised after their original publication day are excluded. Official announcements and Wikinews share
+the news family, with provider counts and metrics reported separately; journalism coverage remains limited.
 Corporate-release discovery uses SEC full-text matches for press/news releases and distribution-wire markers,
 then retains EX-99 exhibits. Monthly queries are subdivided when the search cap is reached. This avoids the
 initial description-only pilot's issuer/template bias, but remains a query-defined release cohort.
