@@ -8,7 +8,7 @@ auditing. Original responses, retrieval times and hashes remain in the local res
 | --- | --- | --- | --- |
 | Primary 8-K | [EDGAR](https://www.sec.gov/edgar/search/), [edgartools](https://github.com/dgunning/edgartools) 5.59.1, MIT SDK | [Public filing content is free to access and reuse](https://www.sec.gov/files/about/webmaster-faq.htm); exclude images | 117,209 indexed in Jan 2025–Sep 2026; 50-document pilot |
 | Corporate releases | EX-99 release/earnings/announcement exhibits attached to 8-Ks; same SDK | Same SEC policy; retain the filing accession for event grouping | 49 accepted after one MD&A exhibit was excluded from a 50-document pilot; attachment availability limits yield |
-| 6-K | EDGAR primary documents; same SDK | Same SEC policy | 199,378 indexed in Jan 2019–Sep 2026; 50-document pilot |
+| 6-K | EDGAR primary documents; same SDK | Same SEC policy | Target reached: 25,000 accepted from 199,378 indexed in Jan 2019–Sep 2026; reproducible month-balanced sample |
 | Federal Reserve | Annual press-release and speech HTML archives; requests/BeautifulSoup | [Public domain unless otherwise indicated](https://www.federalreserve.gov/disclaimer.htm); attribution, exclude third-party media | Complete pass: 1,826 accepted from 1,831 indexed in Jan 2019–Sep 2026; 55 in Q3 2026 |
 | ECB | Versioned JSON archive used by its website, followed by English institutional HTML | [Attribution, accuracy and stated modifications](https://www.ecb.europa.eu/services/using-our-site/disclaimer/html/index.en.html); author-named documents excluded | Complete pass: 722 accepted in Jan 2019–Sep 2026; 27 in Q3 2026 |
 | Public news | [Wikinews category API](https://www.mediawiki.org/wiki/API:Categorymembers), VOA archive, GDELT URL discovery | [Wikinews CC BY 4.0 / earlier CC BY 2.5](https://en.wikinews.org/wiki/Wikinews:Copyright); [VOA-original text only](https://www.voanews.com/p/5338.html); agency and mixed-rights text excluded | Broader pass: 201 accepted from 4,535 candidates; all Wikinews, Jan 2019–Apr 2026, none in Q3 2026 |
@@ -57,6 +57,14 @@ metrics remain separate. The completed Fed corpus has 1,826 documents; ECB has 7
 container build and container inference passed despite the unavailable local Docker daemon.
 An actual 12-document blinded rubric pilot is available locally under `data/research/rubric-pilot/`.
 Its teacher labels are hidden; it is a rubric check, not the later independent test audit.
+
+The 25,000-document 6-K target is complete; release and primary 8-K collection remain in progress.
+Source-date, language, required provenance and body/raw-response hash checks passed on all 29,006
+documents from the five completed passes. News snapshots also use the retained pilot cache and earlier
+raw files; these must travel with the corpus for reproduction. No main benchmark has yet been frozen.
+Valid source text can contain Unicode line separators, so JSONL readers split only at the record newline.
+Preparation records raw input counts and publication ranges, then exclusions by family; acquisition
+counts must not be presented as labeled examples or independent evaluation support.
 
 Description-only release discovery overrepresented certain filing templates: SEC full-text results include
 major-company release exhibits whose descriptions contain only EX-99.1. Release discovery therefore now uses
