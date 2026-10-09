@@ -223,6 +223,11 @@ include dangerous miss counts/rates, unclear discards, discard contamination and
 Runs save the grid, fitted artifact, calibration/policy choices, source snapshot, versions, inference timings
 and fingerprints. Warm single-document latency includes text processing; native sklearn batches of 1/8 and
 serial encoder document batches are identified separately. Frozen encoder timings include all context windows.
+Frozen features are cached by raw body and pinned encoder recipe, independently of labels and subset size.
+Vector checksums and source/runtime fingerprints guard reuse; interrupted writes keep committed features.
+Per-document computation time and allocated VRAM are retained separately from a later fit's cache-loading
+time, so preparation costs remain visible when nested curves reuse the same features. These are frozen,
+corpus-independent encodings; vocabulary/scaling and classifiers still fit each training subset alone.
 GPU jobs share a lock. `--resume` rejects changed inputs/settings or completed artifacts. Full learning curves
 and final test comparisons remain pending the corpus freeze. Paid OpenAI benchmark execution is disabled;
 only the bounded Luna corpus-labeling entry point may spend credits.
