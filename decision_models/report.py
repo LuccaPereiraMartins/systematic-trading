@@ -360,6 +360,15 @@ def build(splits, study, human=None):
                            [[name, value['queued'], value['labeled'], value['unlabeled']] for name, value in coverage.items()]) +
                      "\n\nValidation/test labeling must be complete. A budget-limited training queue can retain unlabeled rows; "
                      "family/error counts remain in the manifest. Attained sample sizes, rather than collection targets, define the learning curves.")
+        if all("teacher_cost_usd" in value for value in coverage.values()):
+            parts.insert(parts.index("## Model comparisons") - 1,
+                         table(["Label queue", "Successful teacher labels", "Recorded USD", "Cost unavailable"],
+                               [[name, value['successful_teacher_labels'], number(value['teacher_cost_usd'], 4),
+                                 value['teacher_cost_unavailable']] for name, value in coverage.items()]) +
+                         "\n\nThese costs cover successful teacher annotations retained in the frozen benchmark, "
+                         "using recorded API usage and prices. Missing costs are counted separately. The shared $3 project ledger "
+                         "also covers pilots, failed or unresolved requests and labels excluded from the benchmark; "
+                         "these retained-label totals are not the entire project bill. Human-review time is excluded.")
     policy_rows = []
     for n in names:
         for key, value in scored[n]["policies"].items():
