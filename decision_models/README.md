@@ -312,6 +312,21 @@ Use CUDA-enabled PyTorch for GPU jobs. The current local runs use Python 3.13 an
 `uv run python` can select a separate CPU-only environment. Versions are recorded and changed runtimes are
 rejected when verifying frozen artifacts. API/container dependencies remain separate from report/GPU groups.
 
+For the complete seven-source collection, the single-use workflow can wait for existing collector PIDs:
+
+```bash
+python decision_models/research_pipeline.py --wait-pid 1234 5678
+```
+
+Replace those example PIDs with the running `collect_sources.py` processes. The workflow checks completed
+source dates, identities, language filters and retained response hashes, then prepares the mixed corpus.
+It saves an offline label quote and labels validation, test, then training with the same $3 Luna Flex ledger.
+Failed requests or incomplete evaluation labels stop it; budget-limited training remains explicit in the
+frozen manifest. It then creates blinded review forms and runs `fit`, `freeze`, `test` serially. Its plan,
+stage logs and status live under the study's `workflow` folder. Resume with the same command and paths;
+changed code, dependency declarations or corpus inputs are rejected. Report generation and PDF inspection
+remain a separate step after the real model study. This workflow dispatches paid labeling within the cap.
+
 `fit` runs every CPU/GPU experiment serially and opens train/selection/calibration only. Baselines have the
 full attainable nested curves. Laya screens head/LoRA x CE/Brier x unweighted/balanced at 1000, then contexts
 at 4000; its chosen recipes receive full curves. FinBERT/BGE screen two learning rates for head/LoRA, then
