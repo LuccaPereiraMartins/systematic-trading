@@ -15,6 +15,13 @@ MODELS = {
 }
 
 
+def window_checkpoint(function, *args):
+    # Forward without a graph also releases masks captured by nested model checkpoints.
+    # Token IDs cannot require gradients; the empty input enables reentrant backward.
+    dummy = torch.empty(0, device=args[0].device, requires_grad=True)
+    return checkpoint(lambda _, *values: function(*values), dummy, *args, use_reentrant=True)
+
+
 class EncoderModel(nn.Module):
     def __init__(self, device="cuda", kind="finbert", adaptation="head", lora_rank=8, checkpoint=None, config=None):
         super().__init__()
@@ -91,7 +98,7 @@ class EncoderModel(nn.Module):
                 ids = pad_sequence(rows, batch_first=True, padding_value=self.tokenizer.pad_token_id)
                 mask = ids != self.tokenizer.pad_token_id
                 # Recompute whole window batches so long documents retain inputs, not every hidden activation.
-                pooled = (checkpoint(self.window_features, ids, mask, use_reentrant=False)
+                pooled = (window_checkpoint(self.window_features, ids, mask)
                           if self.adaptation == "lora" and torch.is_grad_enabled() else self.window_features(ids, mask))
                 vectors.append(pooled)
         return torch.cat(vectors)
@@ -210,7 +217,7 @@ class DocumentModel(nn.Module):
                 lengths = torch.tensor([len(seq) for seq in sequences], device=self.device)
                 mask = torch.arange(ids.shape[1], device=self.device)[None, :] < lengths[:, None]
                 markers = torch.tensor([positions for _, positions in chunk], device=self.device)
-                logits = (checkpoint(self.window_scores, ids, mask, markers, use_reentrant=False)
+                logits = (window_checkpoint(self.window_scores, ids, mask, markers)
                           if torch.is_grad_enabled() else self.window_scores(ids, mask, markers))
                 scores.append(logits)
             scores = torch.cat(scores)
