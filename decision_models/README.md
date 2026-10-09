@@ -323,6 +323,7 @@ or correct multiple comparisons. Fully covered Qwen rows form one identical matc
 
 `report` generates inspectable JSON evidence, Markdown, PNG figures and a PDF under the study's report folder.
 It includes source/class support, critical misses, achieved discard-policy rates, calibration/uncertainty,
+raw-versus-calibrated Brier/ECE and paired context gains,
 learning/context/coverage comparisons, warm latency, separate inference/training allocated VRAM, cached
 weight/checkpoint sizes and a non-executed paid-reference cost scenario. Render and inspect the PDF before
 publication. Human quality remains pending until blinded reviews are imported; it never defaults to teacher
@@ -335,6 +336,8 @@ python decision_models/study.py --splits decision_models/data/research/benchmark
 Fresh preparation preserves old annotations for audit but requeues teacher labels from another rubric.
 The frozen manifest also binds nested subset IDs. The original archive is unchanged. All new labels still
 share the $3 Luna Flex ledger; runner/test/report code does not dispatch paid API calls.
+The [research context](literature.md) identifies primary model/method sources and distinguishes sentiment,
+embedding, typed-decision and triage tasks. Published scores on other tasks are not results of this study.
 
 Engineering verification covered an actual CPU baseline, tiny Laya and Qwen adaptation, matched controls,
 freeze-before-test, resumable test inference, identical coverage filtering, changed-metadata rejection and

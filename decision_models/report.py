@@ -242,6 +242,7 @@ def build(splits, study, human=None):
             if key not in main or entry["samples"] > entries[main[key]]["samples"]:
                 main[key] = name
     names = list(main.values())
+    raw_scores = {name: json.loads((study / "test" / f"{name}.json").read_text())["raw_metrics"]["overall"] for name in names}
     primary, reference = freeze["primary_decision"], freeze["primary_linear"]
     figures(output, entries, configs, scored, intervals, names, (primary, reference))
     git_revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=HERE, text=True).strip()
@@ -260,6 +261,11 @@ def build(splits, study, human=None):
              "No issuer history, portfolio context, future returns or market reaction is supplied. Unclear routes to review. "
              "Macro F1 averages all three declared labels, including absent classes in small slices. "
              "The critical error is a review-worthy document predicted routine.",
+             "The research question is whether supervised decision-model adaptation and larger contiguous context improve "
+             "triage agreement, critical misses and throughput relative to lexical, encoder and small decoder baselines. "
+             "FinBERT's published sentiment results do not establish triage quality; BGE is an embedding model. "
+             "ModernBERT controls for Laya's backbone, while Qwen tests a bounded non-thinking deployment. "
+             f"Primary sources and distinctions are documented in [literature.md](https://github.com/LuccaPereiraMartins/systematic-trading/blob/{git_revision}/decision_models/literature.md).",
              "Train ends 2026-03-31; selection/calibration use April-June; test uses July-September. "
              "Event and verified near-duplicate groups cannot cross boundaries. Old experimental bodies and near duplicates "
              "are excluded from fresh validation/test. Candidate retrieval is approximate and can miss duplicates. "
@@ -302,6 +308,12 @@ def build(splits, study, human=None):
               table(["Model", "Log loss", "ECE (10 bins)", "Median uncertainty"],
                     [[label(configs[n]), number(scored[n]['log_loss']), number(scored[n]['ece_10_bins']),
                       number(float(np.median([r['uncertainty'] for r in predictions[n]])))] for n in names]),
+              table(["Model", "Raw Brier", "Cal. Brier", "Raw ECE", "Cal. ECE"],
+                    [[label(configs[n]), number(raw_scores[n]['brier']), number(scored[n]['brier']),
+                      number(raw_scores[n]['ece_10_bins']), number(scored[n]['ece_10_bins'])] for n in names]),
+              "Raw and calibrated scores use the same test documents. A scalar temperature is fitted on separate "
+              "calibration groups; it changes confidence and discard behavior while preserving argmax labels. "
+              "Its use follows [Guo et al.](https://arxiv.org/abs/1706.04599); it does not guarantee calibration on this cohort.",
               "Uncertainty is 1 minus the largest calibrated class probability. It is model confidence, not a probability "
               "of investment materiality; teacher self-reported uncertainty is retained separately. Class support must be read "
               "beside small-slice macro F1. When no misses are observed, bootstrap resampling cannot reveal unseen errors.",
@@ -343,7 +355,7 @@ def build(splits, study, human=None):
               "Laya uses fixed uniform whole-document pooling and 50% overlapping windows; the native SDK reference uses "
               "most-confident-window aggregation. CE/Brier objectives are document-level; no chunk labels are invented. "
               "Matched pre-update controls separate supervised adaptation from aggregation and k-bit precision changes. "
-              "FinBERT/BGE/ModernBERT use a fresh triage head rather than their original sentiment task. "
+              "FinBERT/BGE/ModernBERT use fresh triage heads; FinBERT's sentiment head is not mapped to triage labels. "
               "Qwen uses non-thinking NF4/BF16 A/B/C scoring; QLoRA is conditional discriminative CE, not full-vocabulary SFT."]
     contrasts = json.loads((study / "bootstrap.json").read_text())["contrasts"]
     parts += [table(["Adapted model", "Train", "Matched-zero F1", "Adapted F1", "Paired gain 95% CI"],
@@ -354,6 +366,12 @@ def build(splits, study, human=None):
                     [[label(configs[v['left']]), f"{entries[v['right']]['samples']} to {entries[v['left']]['samples']}",
                       number(scored[v['left']]['macro_f1'] - scored[v['right']]['macro_f1']), ci(v['metrics']['macro_f1'])]
                      for k, v in contrasts.items() if k.endswith('-sample-increment')]),
+              table(["Model", "Context tokens", "F1 gain", "Paired gain 95% CI"],
+                    [[label(configs[v['left']]), f"{configs[v['right']]['max_len']} to {configs[v['left']]['max_len']}",
+                      number(scored[v['left']]['macro_f1'] - scored[v['right']]['macro_f1']), ci(v['metrics']['macro_f1'])]
+                     for k, v in contrasts.items() if k.endswith('-context-increment')]),
+              "Wider Laya windows change contiguous context and the number of votes under the same pooling rule. "
+              "All source tokens remain covered at each context size; the difference is not previously omitted text.",
               "These paired differences describe this fixed-seed cohort. Additional tuning labels and multiple comparisons "
               "limit claims about minimum data requirements or statistical significance."]
     matched = json.loads((study / "matched-coverage.json").read_text())

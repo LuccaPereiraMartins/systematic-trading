@@ -138,9 +138,10 @@ def evaluate(splits, output):
                     if len(scored) % 100 == 0:
                         print(f"TEST {name}: {len(scored)}/{len(records)}", flush=True)
             rows = prediction_rows(records, [r["logits"] for r in scored], decision)
+            raw_metrics = breakdown(prediction_rows(records, [r["logits"] for r in scored]))
             for row, diagnostic in zip(rows, scored, strict=True):
                 row.update({k: v for k, v in diagnostic.items() if k not in ("body_sha256", "logits")})
-            save({"freeze_sha256": marker["freeze_sha256"], "metrics": breakdown(rows), "predictions": rows,
+            save({"freeze_sha256": marker["freeze_sha256"], "metrics": breakdown(rows), "raw_metrics": raw_metrics, "predictions": rows,
                   "inference_seconds": sum(r["seconds"] for r in scored)}, path)
             save({"freeze_sha256": marker["freeze_sha256"], "result_sha256": fingerprint(path)}, complete)
             predictions[name] = rows
@@ -153,18 +154,28 @@ def evaluate(splits, output):
 
 def summaries(output, predictions, freeze):
     reference = freeze["primary_linear"]
-    contrasts, curves = {}, defaultdict(list)
+    contrasts, curves, contexts, configs = {}, defaultdict(list), defaultdict(list), {}
     for name, entry in freeze["entries"].items():
         if entry.get("matched_zero"):
             contrasts[name + "-adaptation"] = (name, entry["matched_zero"])
+        config = json.loads((output / entry["directory"] / "config.json").read_text())
+        configs[name] = config
+        if entry["kind"] == "laya" and entry["family"] == "research_neural" and entry["role"] in ("context", "curve"):
+            key = tuple(config.get(k) for k in ("adaptation", "samples", "loss_kind", "class_weight_power", "learning_rate"))
+            contexts[key].append(name)
         if entry["role"] == "curve":
-            config = json.loads((output / entry["directory"] / "config.json").read_text())
             key = tuple(config.get(k) for k in ("family", "kind", "adaptation", "classifier", "max_len", "loss_kind"))
             curves[key].append(name)
     for names in curves.values():
         names.sort(key=lambda n: freeze["entries"][n]["samples"])
         for smaller, larger in zip(names, names[1:]):
             contrasts[larger + "-sample-increment"] = (larger, smaller)
+    for names in contexts.values():
+        if len(names) < 2:
+            continue
+        names.sort(key=lambda n: configs[n]["max_len"])
+        for wider in names[1:]:
+            contrasts[wider + "-context-increment"] = (wider, names[0])
     save(bootstrap(predictions, reference, contrasts=contrasts), output / "bootstrap.json")
     coverage = defaultdict(set)
     for name, rows in predictions.items():
