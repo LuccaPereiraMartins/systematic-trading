@@ -331,8 +331,11 @@ For the complete seven-source collection, the single-use workflow can wait for e
 python decision_models/research_pipeline.py --wait-pid 1234 5678
 ```
 
-Replace those example PIDs with the running `collect_sources.py` processes. The workflow checks completed
-source dates, identities, language filters and retained response hashes, then prepares the mixed corpus.
+Replace those example PIDs with the running `collect_sources.py` processes. First recover the complete
+legacy event registry with `legacy_events.py`; its default path can be changed with `--legacy-events`.
+The workflow checks completed source dates, identities, language filters and retained response hashes,
+then prepares the mixed corpus with verified old-event links. Registry and submission-cache hashes are
+required inputs, and incomplete old-body coverage stops the workflow before labeling.
 It saves an offline label quote and labels validation, test, then training with the same $3 Luna Flex ledger.
 Failed requests or incomplete evaluation labels stop it; budget-limited training remains explicit in the
 frozen manifest. It then creates blinded review forms and runs `fit`, `freeze`, `test` serially. Its plan,

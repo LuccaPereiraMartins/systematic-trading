@@ -74,6 +74,15 @@ def corpus_tables(prepared):
                   "Offline reconstruction of retained primary HTML links exact old-body hashes across text-extraction formats. "
                   "These links also quarantine related release exhibits from fresh evaluation. Matching candidates are not "
                   "additional exclusion counts; their groups enter the exclusion rules below. Canonical model inputs are unchanged."]
+    if prepared.get("legacy_event_check"):
+        legacy = prepared["legacy_event_check"]
+        parts += [table(["Legacy event formatter", "Old bodies covered", "Verified events", "Matching source families"],
+                        [[f"edgartools {legacy['sdk_version']}", legacy["legacy_bodies"], legacy["verified_events"],
+                          ", ".join(f"{name}: {count}" for name, count in legacy["matched_families"].items())]]),
+                  "Every old body is reproduced exactly from preserved submissions or retained index/primary responses. "
+                  "The resulting filing-event links also quarantine release-only candidates whose parent filing is absent "
+                  "from the new sample. Matching source rows enter the group exclusion rules and are not additional "
+                  "exclusion counts. Evidence hashes and reconstruction methods are recorded with the corpus."]
     if prepared.get("exclusions_by_family"):
         parts += [table(["Family", "Exclusion reason", "Documents"],
                         [[name, reason.replace("_", " "), count]

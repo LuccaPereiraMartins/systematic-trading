@@ -15,7 +15,7 @@ import psutil
 
 from label import Budget, LEDGER, MAX_OUTPUT, MODEL, RATES, RUBRIC_HASH, reservation
 from prepare import family
-from schemas import HERE, annotation, body_hash, read_records, save
+from schemas import HERE, annotation, body_hash, file_hash, read_records, save
 
 
 FAMILIES = ("8k", "releases", "6k", "fed", "ecb", "news", "govuk")
@@ -96,7 +96,7 @@ def audit(corpora, legacy):
                                for value in responses):
                         raise ValueError(f"Retained response missing or hash differs: {row['document_id']}")
                     checked.add(key)
-            result[path.name] = {"documents": len(rows), "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            result[path.name] = {"documents": len(rows), "sha256": file_hash(path),
                                  "collector_outcomes": state["outcomes"]}
             print(f"Verified {path.name}: {len(rows)} documents", flush=True)
     if total > 100_000:
@@ -134,10 +134,10 @@ def run(args):
     output.mkdir(parents=True, exist_ok=True)
     def source_hashes():
         paths = [*sorted(HERE.glob("*.py")), HERE.parent / "pyproject.toml", HERE.parent / "uv.lock"]
-        return {str(path.relative_to(HERE.parent)): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
+        return {str(path.relative_to(HERE.parent)): file_hash(path) for path in paths}
 
     sources = source_hashes()
-    plan = {"corpora": list(map(str, corpora)), "legacy": str(args.legacy), "splits": str(args.splits),
+    plan = {"corpora": list(map(str, corpora)), "legacy": str(args.legacy), "legacy_events": str(args.legacy_events), "splits": str(args.splits),
             "study": str(args.study), "source_sha256": sources, "label_ceiling_usd": 3.0, "ledger": str(LEDGER)}
     plan_path = output / "plan.json"
     def unchanged():
@@ -165,10 +165,15 @@ def run(args):
             unchanged()
             save(audit(corpora, args.legacy), output / "corpus-audit.json")
             if not (args.splits / "prepared.json").exists():
-                command("prepare", "prepare.py", ["--corpora", *corpora, "--legacy", args.legacy, "--output", args.splits])
+                command("prepare", "prepare.py", ["--corpora", *corpora, "--legacy", args.legacy,
+                                                  "--legacy-events", args.legacy_events, "--output", args.splits])
             prepared = json.loads((args.splits / "prepared.json").read_text(encoding="utf-8"))
-            if (set(map(Path, prepared["inputs"])) != set([*corpora, args.legacy]) or prepared["rubric_sha256"] != RUBRIC_HASH
-                    or any(hashlib.sha256(Path(path).read_bytes()).hexdigest() != digest
+            event_audit = prepared.get("legacy_event_check") or {}
+            legacy_bodies = len({body_hash(row) for row in read_records(args.legacy)})
+            if (set(map(Path, prepared["inputs"])) != set([*corpora, args.legacy, args.legacy_events, args.legacy_events.parent / "submissions.sqlite"])
+                    or prepared["rubric_sha256"] != RUBRIC_HASH or event_audit.get("legacy_bodies") != legacy_bodies
+                    or event_audit.get("verified_events", 0) < legacy_bodies
+                    or any(file_hash(path) != digest
                            for path, digest in prepared["inputs"].items())):
                 raise ValueError("Prepared corpus inputs/rubric changed")
             if not (args.splits / "manifest.json").exists():
@@ -202,10 +207,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corpus", type=Path, default=HERE / "data/research/corpus")
     parser.add_argument("--legacy", type=Path, default=HERE / "data/dataset.json")
+    parser.add_argument("--legacy-events", type=Path, default=HERE / "data/research/legacy-events/events.json")
     parser.add_argument("--splits", type=Path, default=HERE / "data/research/benchmark")
     parser.add_argument("--study", type=Path, default=HERE / "training_runs/research-study")
     parser.add_argument("--wait-pid", type=int, nargs="*", default=[])
     args = parser.parse_args()
-    for name in ("corpus", "legacy", "splits", "study"):
+    for name in ("corpus", "legacy", "legacy_events", "splits", "study"):
         setattr(args, name, getattr(args, name).resolve())
     run(args)
