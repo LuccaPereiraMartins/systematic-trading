@@ -63,7 +63,7 @@ def load_split(directory, name):
     expected = manifest["splits"][name]
     if hashlib.sha256(content).hexdigest() != expected["sha256"]:
         raise ValueError(f"Split checksum mismatch: {name}")
-    rows = [json.loads(line) for line in content.decode().splitlines()]
+    rows = [json.loads(line) for line in content.decode().split("\n") if line.strip()]
     if len(rows) != expected["count"]:
         raise ValueError(f"Split count mismatch: {name}")
     return rows
@@ -89,7 +89,8 @@ def read_records(path):
     if not path.exists():
         return []
     content = path.read_text(encoding="utf-8")
-    rows = json.loads(content) if path.suffix == ".json" else [json.loads(line) for line in content.splitlines() if line]
+    # Unicode line separators can be literal source text inside a valid JSON string.
+    rows = json.loads(content) if path.suffix == ".json" else [json.loads(line) for line in content.split("\n") if line.strip()]
     return [FilingRecord.model_validate(row).model_dump(exclude_unset=True) for row in rows]
 
 
