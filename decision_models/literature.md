@@ -42,6 +42,26 @@ sentiment quality, investment materiality, historical novelty or trading profita
   adaptation and sample-size differences use shared resamples; they do not quantify training instability
   or correct multiple comparisons. Tuning labels count in addition to each curve's training rows.
 
+## Labels and the scope of the claim
+
+- [Gilardi, Alizadeh and Kubli (PNAS, 2023)](https://pmc.ncbi.nlm.nih.gov/articles/PMC10372638/)
+  compare GPT-3.5 annotations with crowd workers using trained-human references for political tweets and
+  news. Their results support the potential of low-cost model annotation, but concern different models,
+  concepts and documents. They do not establish Luna's accuracy for financial review triage.
+- [Pangakis, Wolken and Fasching (2023)](https://arxiv.org/abs/2306.00176) evaluate GPT-4 annotation across
+  27 tasks and 11 social-science datasets. Performance varies with task and dataset; they argue for
+  task-specific validation against human references. A large automatically labeled corpus alone does
+  not resolve the validity of the labels.
+
+In this study, Luna supplies the operational labeling convention. Training and evaluation labels come
+from that teacher, so held-out scores measure how well each approach reproduces its triage decisions on
+new documents. Comparisons can establish imitation quality, measured resource requirements and sample
+efficiency under this convention. They cannot establish how often an analyst would miss an economically
+material development. The returned non-expert rubric pilot informs clarity and ambiguous cases; its
+disagreements do not override teacher labels or estimate analyst accuracy. Any later blinded non-expert
+audit remains a separately qualified result. Independent expert validation would be needed for stronger
+claims about analyst performance; it is not replaced by teacher self-reported uncertainty.
+
 The contribution can be a negative adaptation result or a strong lexical baseline. It must rest on this
 study's observed quality, misses, coverage and cost, with teacher agreement separated from independent
 non-expert review. Missing recent journalistic coverage limits any wider financial-news claim.
