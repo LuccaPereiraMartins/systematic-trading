@@ -57,6 +57,11 @@ metrics remain separate. The completed Fed corpus has 1,826 documents; ECB has 7
 container build and container inference passed despite the unavailable local Docker daemon.
 An actual 12-document blinded rubric pilot is available locally under `data/research/rubric-pilot/`.
 Its teacher labels are hidden; it is a rubric check, not the later independent test audit.
+The returned non-expert review contains 12 answers and no explanatory notes. Eight agree with Luna;
+four differ on a thin 6-K cover sheet, administrative amendments, a director appointment and an ECB
+statistical release. The reviewer explicitly cautioned that the exercise was difficult. Answers and
+their source mapping are preserved locally as rubric feedback; they do not override dataset labels
+or provide held-out accuracy evidence. These cases need interpretation before changing the rubric.
 
 The 25,000-document 6-K target is complete; release and primary 8-K collection remain in progress.
 Source-date, language, required provenance and body/raw-response hash checks passed on all 29,006
@@ -75,3 +80,10 @@ The initial grouped OR query returned zero: EFTS interpreted its parentheses as 
 The corrected ungrouped query returned 4,896 January 2019 hits, including EX-99 exhibits. The empty index
 and original responses are retained as failed discovery evidence; the corrected query is bound to collection
 settings. Search timeouts, shard failures and incomplete pages reject an index rather than hiding shortfalls.
+
+Primary SEC document discovery now reads the canonical filing index before falling back to the SDK's
+full-submission lookup. On 12 collected 8-Ks and 12 collected 6-Ks, both routes selected the same primary
+document URL; the index response and its hash are retained. This reduces unnecessary exhibit downloads
+without changing which document is collected. An interrupted final JSONL append is archived before
+recovery, while malformed interior records still reject the file. Completed rows reconcile a lagging
+collection checkpoint so a resumed job keeps their accepted status.
