@@ -86,10 +86,20 @@ release exhibits. It records the SDK version, attempted/matched counts and body/
 changing canonical source bodies. This closes verified cross-format overlaps; other duplicate retrieval
 remains approximate. Missing or changed retained raw responses stop reconstruction before labeling.
 
+Primary sampling alone cannot cover every release's parent filing. Three retained earnings/management
+release exhibits dated May/August 2026 demonstrated old filing events whose primaries were absent from
+the collected 8-K prefix. The SDK transport cache supports recovery of all 10,000 old body identities by
+exact hash, including six exceptional formats. The recovery snapshot preserves complete submissions and
+required index/primary responses, formatter methods, original cache metadata and checksums. A complete
+primary preceding one truncated trailing attachment is usable only when it reproduces the old body exactly;
+the damaged source bytes remain preserved. Preparation verifies the snapshot independently and joins
+registered filing events before temporal selection. The registry travels with the original archive and corpus.
+
 Description-only release discovery overrepresented certain filing templates: SEC full-text results include
 major-company release exhibits whose descriptions contain only EX-99.1. Release discovery therefore now uses
 full-text press/news-release and distribution-wire markers, filtered to EX-99 exhibits. Queries are split by
-month and further subdivided rather than silently truncating capped searches. This is a reproducible query
+month and further subdivided for capped searches or repeated server errors. Unrecoverable single-day
+failures still reject discovery. This is a reproducible query
 cohort, not a census of every corporate release. The earlier pilot remains recorded as an extraction check.
 The initial grouped OR query returned zero: EFTS interpreted its parentheses as required literal terms.
 The corrected ungrouped query returned 4,896 January 2019 hits, including EX-99 exhibits. The empty index
