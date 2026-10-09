@@ -110,7 +110,15 @@ def prepare(corpora, output, legacy=HERE / "data/dataset.json", validation=1200,
     if (output / "prepared.json").exists():
         raise ValueError("Preparation already exists; label its inputs and use --freeze, or a new directory")
     legacy_rows = read_records(legacy)
-    rows = [row for path in corpora for row in read_records(path)] + legacy_rows
+    rows, census = [], []
+    for path in [*corpora, legacy]:
+        source_rows = legacy_rows if path == legacy else read_records(path)
+        census.append({"input": str(path), "rows": len(source_rows), "legacy": path == legacy,
+                       "families": dict(Counter(family(row) for row in source_rows)),
+                       "providers": dict(Counter(row.get("source", "sec") for row in source_rows)),
+                       "start": min((row["date"] for row in source_rows), default=None),
+                       "end": max((row["date"] for row in source_rows), default=None)})
+        rows.extend(source_rows)
     # Stable input order also makes the candidate index and union groups deterministic.
     rows.sort(key=lambda row: (row["date"], body_hash(row), not bool(row.get("document_id")), row.get("document_id") or ""))
     for row in rows:
@@ -120,18 +128,22 @@ def prepare(corpora, output, legacy=HERE / "data/dataset.json", validation=1200,
     group_partitions = defaultdict(set)
     for i, row in enumerate(rows):
         group_partitions[groups[i][0]].add(partition(row["date"]))
-    selected, excluded, seen = defaultdict(list), Counter(), set()
+    selected, excluded, exclusions_by_family, seen = defaultdict(list), Counter(), defaultdict(Counter), set()
     for i, row in enumerate(rows):
         name, digest = partition(row["date"]), body_hash(row)
         group, previous = groups[i]
+        reason = None
         if len(group_partitions[group]) > 1:
-            excluded["cross_boundary_group"] += 1
+            reason = "cross_boundary_group"
         elif name == "outside":
-            excluded["outside_dates"] += 1
+            reason = "outside_dates"
         elif name != "train" and previous:
-            excluded["previously_experimented_group"] += 1
+            reason = "previously_experimented_group"
         elif digest in seen:
-            excluded["exact_duplicate"] += 1
+            reason = "exact_duplicate"
+        if reason:
+            excluded[reason] += 1
+            exclusions_by_family[family(row)][reason] += 1
         else:
             seen.add(digest)
             if row["llm"]["label"] is not None and row["llm"].get("rubric_sha256") != RUBRIC_HASH:
@@ -154,7 +166,9 @@ def prepare(corpora, output, legacy=HERE / "data/dataset.json", validation=1200,
           "rubric_sha256": RUBRIC_HASH,
           "num_perm": PERMUTATIONS,
           "inputs": {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in [*corpora, legacy]},
-          "excluded": dict(excluded), "partitions": details,
+          "census": census, "excluded": dict(excluded),
+          "exclusions_by_family": {name: dict(counts) for name, counts in exclusions_by_family.items()},
+          "partitions": details,
           "method": "Temporal; event and verified near-duplicate groups; legacy excluded from validation/test"},
          output / "prepared.json")
     print(json.dumps(details), flush=True)
