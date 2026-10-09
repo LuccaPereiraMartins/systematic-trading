@@ -162,10 +162,16 @@ def prepare(corpora, output, legacy=HERE / "data/dataset.json", validation=1200,
 
 def freeze(output):
     prepared = json.loads((output / "prepared.json").read_text(encoding="utf-8"))
-    groups = {}
+    groups, coverage = {}, {}
     for name in ("train", "validation", "test"):
         inputs = read_records(output / f"{name}-input.jsonl")
         labeled = [row for row in inputs if annotation(row)["label"] is not None]
+        missing = [row for row in inputs if annotation(row)["label"] is None]
+        coverage[name] = {"queued": len(inputs), "labeled": len(labeled), "unlabeled": len(missing),
+                          "unlabeled_by_family": dict(Counter(family(row) for row in missing)),
+                          "unlabeled_errors": dict(Counter(row.get("label_error", {}).get("type", "Not labeled") for row in missing))}
+        if name != "train" and missing:
+            raise ValueError(f"Complete all selected {name} labels before freezing; {len(missing)} remain")
         if any(row["human"]["label"] is None and prepared.get("rubric_sha256") and
                row["llm"].get("rubric_sha256") != prepared["rubric_sha256"] for row in labeled):
             raise ValueError("Teacher labels must use the prepared benchmark's rubric")
@@ -183,7 +189,7 @@ def freeze(output):
     if not calibration:
         raise ValueError("Need at least two independent validation groups")
     groups["selection"], groups["calibration"] = selection, calibration
-    manifest, files = {"method": prepared["method"], "prepared": prepared, "splits": {}}, {}
+    manifest, files = {"method": prepared["method"], "prepared": prepared, "label_coverage": coverage, "splits": {}}, {}
     for name, rows in groups.items():
         content = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows).encode()
         files[f"{name}.jsonl"] = content
