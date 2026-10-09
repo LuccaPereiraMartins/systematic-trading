@@ -106,10 +106,14 @@ def fit(args):
         config["model"], config["revision"] = MODELS[args.model]
         config["versions"].update({name: version(name) for name in ("torch", "transformers")})
         feature_started = time.perf_counter()
-        texts, stext, ctext = [embeddings(args.model, rows, name, args.device)
-                              for rows, name in ((train, "train"), (selection, "selection"), (calibration, "calibration"))]
+        features, preparation = [], {}
+        for rows, name in ((train, "train"), (selection, "selection"), (calibration, "calibration")):
+            preparation[name] = {}
+            features.append(embeddings(args.model, rows, name, args.device, preparation[name]))
+        texts, stext, ctext = features
+        config["feature_preparation"] = preparation
         config["feature_preparation_seconds"] = time.perf_counter() - feature_started
-        config["feature_cost_note"] = "Frozen features are resumably cached; elapsed time may include cache reuse"
+        config["feature_cost_note"] = "Body/recipe caches share frozen features across subsets; recorded compute is separate from this fit's cache preparation"
     prototype = make(args.model, classifier=args.classifier)
     if args.model == "majority":
         prefix, x, sx, cx, candidates = [], texts, stext, ctext, [({}, prototype)]
