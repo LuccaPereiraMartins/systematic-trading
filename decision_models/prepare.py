@@ -104,6 +104,7 @@ def sample(rows, number=None, by_label=False):
 
 
 def prepare(corpora, output, legacy=HERE / "data/dataset.json", validation=1200, test=1800, train=25000):
+    from label import RUBRIC_HASH
     if (output / "manifest.json").exists():
         raise ValueError("Benchmark is frozen; use another output directory")
     if (output / "prepared.json").exists():
@@ -111,7 +112,7 @@ def prepare(corpora, output, legacy=HERE / "data/dataset.json", validation=1200,
     legacy_rows = read_records(legacy)
     rows = [row for path in corpora for row in read_records(path)] + legacy_rows
     # Stable input order also makes the candidate index and union groups deterministic.
-    rows.sort(key=lambda row: (row["date"], body_hash(row), row.get("document_id") or ""))
+    rows.sort(key=lambda row: (row["date"], body_hash(row), not bool(row.get("document_id")), row.get("document_id") or ""))
     for row in rows:
         if date.fromisoformat(row["date"]).isoformat() != row["date"]:
             raise ValueError("Every row needs an ISO publication date")
@@ -133,6 +134,8 @@ def prepare(corpora, output, legacy=HERE / "data/dataset.json", validation=1200,
             excluded["exact_duplicate"] += 1
         else:
             seen.add(digest)
+            if row["llm"]["label"] is not None and row["llm"].get("rubric_sha256") != RUBRIC_HASH:
+                row = {**row, "previous_llm_annotation": row["llm"], "llm": {"label": None, "uncertainty": None}}
             selected[name].append({**row, "group_id": group, "previously_experimented": previous})
     maximums = {"train": train, "validation": validation, "test": test}
     details = {}
@@ -148,6 +151,7 @@ def prepare(corpora, output, legacy=HERE / "data/dataset.json", validation=1200,
                          "families": dict(Counter(family(r) for r in chosen)),
                          "labeled": sum(annotation(r)["label"] is not None for r in chosen)}
     save({"cutoffs": CUTOFFS, "near_duplicate_threshold": NEAR_THRESHOLD, "candidate_threshold": SEARCH_THRESHOLD,
+          "rubric_sha256": RUBRIC_HASH,
           "num_perm": PERMUTATIONS,
           "inputs": {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in [*corpora, legacy]},
           "excluded": dict(excluded), "partitions": details,
@@ -158,10 +162,19 @@ def prepare(corpora, output, legacy=HERE / "data/dataset.json", validation=1200,
 
 def freeze(output):
     prepared = json.loads((output / "prepared.json").read_text(encoding="utf-8"))
-    groups = {}
+    groups, coverage = {}, {}
     for name in ("train", "validation", "test"):
         inputs = read_records(output / f"{name}-input.jsonl")
         labeled = [row for row in inputs if annotation(row)["label"] is not None]
+        missing = [row for row in inputs if annotation(row)["label"] is None]
+        coverage[name] = {"queued": len(inputs), "labeled": len(labeled), "unlabeled": len(missing),
+                          "unlabeled_by_family": dict(Counter(family(row) for row in missing)),
+                          "unlabeled_errors": dict(Counter(row.get("label_error", {}).get("type", "Not labeled") for row in missing))}
+        if name != "train" and missing:
+            raise ValueError(f"Complete all selected {name} labels before freezing; {len(missing)} remain")
+        if any(row["human"]["label"] is None and prepared.get("rubric_sha256") and
+               row["llm"].get("rubric_sha256") != prepared["rubric_sha256"] for row in labeled):
+            raise ValueError("Teacher labels must use the prepared benchmark's rubric")
         if not labeled:
             raise ValueError(f"No labeled {name} documents")
         groups[name] = sorted(labeled, key=lambda r: (r["date"], body_hash(r)))
@@ -176,7 +189,7 @@ def freeze(output):
     if not calibration:
         raise ValueError("Need at least two independent validation groups")
     groups["selection"], groups["calibration"] = selection, calibration
-    manifest, files = {"method": prepared["method"], "prepared": prepared, "splits": {}}, {}
+    manifest, files = {"method": prepared["method"], "prepared": prepared, "label_coverage": coverage, "splits": {}}, {}
     for name, rows in groups.items():
         content = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows).encode()
         files[f"{name}.jsonl"] = content
@@ -184,6 +197,13 @@ def freeze(output):
                                      "sha256": hashlib.sha256(content).hexdigest(),
                                      "families": dict(Counter(family(r) for r in rows)),
                                      "labels": dict(Counter(annotation(r)["label"] for r in rows))}
+    ordered = sample(groups["train"], by_label=True)
+    subsets = {}
+    for number in sorted(set([n for n in (250, 1000, 4000, 16000) if n <= len(ordered)] + [len(ordered)])):
+        subsets[str(number)] = [body_hash(r) for r in ordered[:number]]
+    files["subsets.json"] = (json.dumps({"seed": 42, "order": "Round-robin family/label; stable body-hash ordering",
+                                       "subsets": subsets}, indent=2) + "\n").encode()
+    manifest["subsets_sha256"] = hashlib.sha256(files["subsets.json"]).hexdigest()
     files["manifest.json"] = (json.dumps(manifest, indent=2) + "\n").encode()
     for name, content in files.items():
         path = output / name
@@ -191,12 +211,6 @@ def freeze(output):
             raise ValueError(f"Frozen benchmark differs: {path}")
     for name, content in files.items():
         (output / name).write_bytes(content)
-    ordered = sample(groups["train"], by_label=True)
-    subsets = {}
-    for number in sorted(set([n for n in (250, 1000, 4000, 16000) if n <= len(ordered)] + [len(ordered)])):
-        subsets[str(number)] = [body_hash(r) for r in ordered[:number]]
-    save({"seed": 42, "order": "Round-robin family/label; stable body-hash ordering", "subsets": subsets},
-         output / "subsets.json")
     print(json.dumps(manifest["splits"]), flush=True)
 
 
