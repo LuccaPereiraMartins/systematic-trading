@@ -59,12 +59,14 @@ def human_audit(path, records, predictions, reference):
 def corpus_tables(prepared):
     parts = []
     if prepared.get("census"):
-        parts += [table(["Input", "Raw documents", "Family / provider", "Publication range"],
+        parts += [table(["Input", "Raw documents", "Family / provider", "Document dates"],
                         [[Path(row["input"]).name + (" (legacy)" if row["legacy"] else ""), row["rows"],
                           ", ".join(row["families"]) + " / " + ", ".join(row["providers"]),
                           f"{row['start']} to {row['end']}"] for row in prepared["census"]]),
                   "Raw acquisition counts precede duplicate quarantine, sampling and labeling. Legacy inputs were previously "
-                  "experimented on and are eligible only for training."]
+                  "experimented on and are eligible only for training. SEC dates are filing dates, including release exhibits, "
+                  "and may be later than publication elsewhere. Other sources use original article dates or publication metadata; "
+                  "temporal splits use these recorded document dates at day precision."]
     if prepared.get("exclusions_by_family"):
         parts += [table(["Family", "Exclusion reason", "Documents"],
                         [[name, reason.replace("_", " "), count]
