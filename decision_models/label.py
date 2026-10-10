@@ -20,7 +20,7 @@ MODEL = "gpt-6-luna"
 CONCURRENCY = 4
 TOKENS_PER_MINUTE = 180_000
 MAX_OUTPUT = 1024
-RATES = {"input": 0.05, "cached_input": 0.005, "output": 0.25}
+RATES = {"input": 0.05, "cached_input": 0.005, "cache_write": 0.0625, "output": 0.25}
 LEDGER = HERE / "data/research/luna-ledger.sqlite"
 RUBRIC = """Classify whether this financial document warrants a general investment analyst's closer review.
 Judge the supplied content alone, without portfolio context, prior releases or subsequent market outcomes.
@@ -88,15 +88,22 @@ def reservation(body):
     # UTF-8 bytes bound input token count even if model tokenisation changes.
     count = len(tiktoken.get_encoding("o200k_base").encode(RUBRIC + body, disallowed_special=()))
     bound = len((RUBRIC + body).encode()) + 2048
-    rate = RATES["input"] * (2 if bound > 272_000 else 1)
+    rate = RATES["cache_write"] * (2 if bound > 272_000 else 1)
     output_rate = RATES["output"] * (1.5 if bound > 272_000 else 1)
     return count, (bound * rate + MAX_OUTPUT * output_rate) / 1_000_000
 
 
 def usage_cost(usage):
-    cached = getattr(getattr(usage, "input_tokens_details", None), "cached_tokens", 0) or 0
+    details = getattr(usage, "input_tokens_details", None)
+    cached = getattr(details, "cached_tokens", 0) or 0
+    written = getattr(details, "cache_write_tokens", None)
+    # Older usage schemas do not identify writes; price their uncached tokens conservatively.
+    written = usage.input_tokens - cached if written is None else written
+    ordinary = usage.input_tokens - cached - written
+    if min(usage.input_tokens, usage.output_tokens, cached, written, ordinary) < 0:
+        raise ValueError("Invalid token usage; retain the request reservation")
     long = usage.input_tokens > 272_000
-    return ((usage.input_tokens - cached) * RATES["input"] * (2 if long else 1)
+    return ((ordinary * RATES["input"] + written * RATES["cache_write"]) * (2 if long else 1)
             + cached * RATES["cached_input"] * (2 if long else 1)
             + usage.output_tokens * RATES["output"] * (1.5 if long else 1)) / 1_000_000
 
@@ -105,7 +112,7 @@ async def label_document(client, body):
     """Legacy benchmark interface; benchmark authorization is separate from corpus labeling."""
     response = await client.responses.parse(model=MODEL, service_tier="flex", reasoning={"effort": "low"},
                                             instructions=RUBRIC, input=body, text_format=LabelOutput,
-                                            max_output_tokens=MAX_OUTPUT)
+                                            max_output_tokens=MAX_OUTPUT, prompt_cache_options={"mode": "explicit"})
     if response.status != "completed" or response.output_parsed is None:
         raise ValueError(f"Model did not return a completed label: {response.status}")
     return response.output_parsed.model_dump()
@@ -151,6 +158,7 @@ async def label_dataset(dataset=DATASET, budget_usd=3.0, ledger=LEDGER, limit=No
                         response = await client.responses.parse(
                             model=MODEL, service_tier="flex", reasoning={"effort": "low"}, instructions=RUBRIC,
                             input=row["body"], text_format=LabelOutput, max_output_tokens=MAX_OUTPUT,
+                            prompt_cache_options={"mode": "explicit"},
                         )
                         break
                     except RateLimitError:
@@ -164,6 +172,8 @@ async def label_dataset(dataset=DATASET, budget_usd=3.0, ledger=LEDGER, limit=No
                 details = {"response_id": response.id, "usage": usage.model_dump() if usage else None,
                            "model": response.model, "service_tier": getattr(response, "service_tier", "flex"),
                            "rubric_sha256": RUBRIC_HASH, "created_utc": datetime.now(timezone.utc).isoformat(),
+                           "cache_mode": "explicit", "rates_usd_per_million": RATES,
+                           "cost_is_upper_bound": usage is None or getattr(usage.input_tokens_details, "cache_write_tokens", None) is None,
                            "estimated_cost_usd": charge}
                 refusal = any(item.type == "refusal" for output in response.output
                               for item in getattr(output, "content", []))
