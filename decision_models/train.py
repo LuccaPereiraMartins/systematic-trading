@@ -21,7 +21,7 @@ from torch import nn
 
 from benchmark import Benchmark
 from encoders import load_model
-from schemas import LABELS, annotation, load_split, replace_file, save as save_json
+from schemas import LABELS, annotation, body_hash, load_split, replace_file, save as save_json
 
 
 HERE = Path(__file__).resolve().parent
@@ -31,13 +31,20 @@ DOCUMENT_BATCH = 8  # Accumulate gradients from eight complete documents.
 CHECKPOINT_STEPS = 25
 
 
-def evaluate(model, items):
+def objective(logits, label, kind="ce"):
+    if kind == "ce":
+        return nn.functional.cross_entropy(logits[None], torch.tensor([label], device=logits.device))
+    target = nn.functional.one_hot(torch.tensor(label, device=logits.device), len(LABELS))
+    return (logits.softmax(-1) - target).square().sum()
+
+
+def evaluate(model, items, loss_kind="ce"):
     model.eval()
     rows, loss = [], 0.0
     with torch.no_grad():
         for index, (windows, label, body_hash) in enumerate(items, 1):
             logits, _ = model(windows)
-            loss += nn.functional.cross_entropy(logits[None], torch.tensor([label], device=model.device)).item()
+            loss += objective(logits, label, loss_kind).item()
             rows.append(
                 {
                     "reference": LABELS[label],
@@ -60,6 +67,21 @@ def save_torch(value, path):
 def run(args):
     torch.manual_seed(SEED)
     torch.set_num_threads(4)
+    manifest = json.loads((args.splits / "manifest.json").read_text(encoding="utf-8"))
+    research = "prepared" in manifest
+    if research:
+        from protocol import training_subset
+        records = training_subset(args.splits, args.samples)
+        if args.epochs > 3 or args.selection == "tuned":
+            raise ValueError("Research runs use at most three epochs and raw selection F1")
+    else:
+        if args.samples is not None or args.context is not None or args.objective != "ce":
+            raise ValueError("Research ablations require fresh research splits")
+        records = load_split(args.splits, "train")
+    args.selection = args.selection or ("raw" if research else "tuned")
+    context = {"pooling_method": "uniform", "window_batch": args.window_batch} if research else None
+    if research and args.context is not None:
+        context["max_len"] = args.context
     # Resume with the checkpoint's pinned model/task, not today's default prompt.
     last = args.output / "last.pt"
     model = load_model(
@@ -68,6 +90,7 @@ def run(args):
         kind=args.model,
         adaptation=args.adaptation,
         lora_rank=args.lora_rank,
+        config=context,
     )
     encoder_params, head_params = [], []
     for name, parameter in model.named_parameters():
@@ -78,7 +101,6 @@ def run(args):
         {"params": encoder_params, "lr": args.encoder_learning_rate or args.learning_rate},
     ]
     optimizer = torch.optim.AdamW(groups if encoder_params else groups[:1], weight_decay=0.01)
-    records = load_split(args.splits, "train")
     counts = torch.tensor(
         [sum(annotation(row)["label"] == label for row in records) for label in LABELS], dtype=torch.float
     )
@@ -87,7 +109,6 @@ def run(args):
     weights = (len(records) / (3 * counts)).pow(args.class_weight_power)
     weights /= (weights * counts / len(records)).sum()
     weights = weights.to(model.device)
-    manifest = json.loads((args.splits / "manifest.json").read_text(encoding="utf-8"))
     config = {
         "kind": args.model,
         "adaptation": args.adaptation,
@@ -126,6 +147,17 @@ def run(args):
         "gpu": torch.cuda.get_device_name() if args.device == "cuda" else None,
         "trainable_parameters": sum(p.numel() for p in model.parameters() if p.requires_grad),
     }
+    if research:
+        config.update(family="research_neural", samples=len(records), loss_kind=args.objective,
+                      pooling_method="uniform", selection_split="selection", api_cost_usd=0.0,
+                      requested_context=args.context, requested_window_batch=args.window_batch,
+                      train_subset_sha256=hashlib.sha256(json.dumps([
+                          (body_hash(row), annotation(row)["label"]) for row in records]).encode()).hexdigest(),
+                      source_sha256={**config["source_sha256"],
+                                     "protocol.py": hashlib.sha256((HERE / "protocol.py").read_bytes()).hexdigest(),
+                                     "prepare.py": hashlib.sha256((HERE / "prepare.py").read_bytes()).hexdigest()})
+        config["pooling"] = "Fixed uniform whole-document pooling; no window labels"
+        config["objective"] = f"Class-weighted document-level {args.objective}"
     args.output.mkdir(parents=True, exist_ok=True)
     state = {
         "epoch": 0,
@@ -155,7 +187,13 @@ def run(args):
         model.load_state_dict(saved["weights"], strict=False)
         optimizer.load_state_dict(saved["optimizer"])
         state = saved["state"]
-        if state["epoch"] >= args.epochs:
+        if state["epoch"] >= args.epochs and (not research or args.limit or (args.output / "complete.json").exists()):
+            if research and not args.limit:
+                from protocol import fingerprint
+                completed = json.loads((args.output / "complete.json").read_text(encoding="utf-8"))
+                for name, path in (("config", "config.json"), ("artifact", "best.pt"), ("decision", "decision.json")):
+                    if fingerprint(args.output / path) != completed[f"{name}_sha256"]:
+                        raise ValueError("Completed research run changed")
             print(f"Already completed {state['epoch']} epoch(s); selected epoch {state['best_epoch']}", flush=True)
             return
         state.setdefault("resumes", []).append({key: config[key] for key in ("git_revision", "source_sha256", "gpu")})
@@ -176,17 +214,18 @@ def run(args):
         torch.cuda.reset_peak_memory_stats()
 
     def prepare(name):
-        records = load_split(args.splits, name)
-        random.Random(SEED).shuffle(records)
+        rows = list(records) if research and name == "train" else load_split(args.splits, name)
+        random.Random(SEED).shuffle(rows)
         if args.limit:
-            records = records[: args.limit]
+            rows = rows[: args.limit]
+        prepared_records[name] = rows
         items = [
             (
                 model.windows(row["body"]),
                 LABELS.index(annotation(row)["label"]),
                 hashlib.sha256(row["body"].encode()).hexdigest(),
             )
-            for row in records
+            for row in rows
         ]
         if config["cache_window_features"]:
             key = {
@@ -218,7 +257,9 @@ def run(args):
         print(f"Prepared {name}: {len(items)} documents, {sum(len(w) for w, _, _ in items)} windows", flush=True)
         return items
 
-    train, validation = prepare("train"), prepare("validation")
+    prepared_records = {}
+    selection_name = "selection" if research else "validation"
+    train, validation = prepare("train"), prepare(selection_name)
 
     def checkpoint(path=last):
         state["seconds"] = previous_seconds + time.perf_counter() - started
@@ -247,7 +288,7 @@ def run(args):
         return result["selection_macro_f1"]
 
     if not state["history"]:
-        baseline = evaluate(model, validation)
+        baseline = evaluate(model, validation, args.objective)
         selected = selection_score(baseline)
         save_json(baseline, args.output / "validation.json")
         baseline.pop("predictions")
@@ -271,7 +312,7 @@ def run(args):
                 logits, _ = model(windows)
                 # A one-row weighted MEAN would divide by its own weight and cancel it.
                 loss = (
-                    nn.functional.cross_entropy(logits[None], torch.tensor([label], device=model.device))
+                    objective(logits, label, args.objective)
                     * weights[label]
                 )
                 if not torch.isfinite(loss):
@@ -288,7 +329,7 @@ def run(args):
                     f"Epoch {state['epoch'] + 1}: {state['offset']}/{len(train)}; loss={state['loss_sum'] / state['offset']:.3f}",
                     flush=True,
                 )
-        scores = evaluate(model, validation)
+        scores = evaluate(model, validation, args.objective)
         selected = selection_score(scores)
         save_json(scores, args.output / f"validation-epoch-{state['epoch'] + 1}.json")
         if selected > state["best_f1"]:
@@ -311,6 +352,36 @@ def run(args):
         from tune import tune_offsets
 
         tune_offsets(args.output, args.splits)
+    if research and args.limit is None:
+        from protocol import breakdown, calibrate, fingerprint, prediction_rows, speed, probabilities, discard
+        import numpy as np
+        best = torch.load(args.output / "best.pt", map_location="cpu", weights_only=True)
+        model.load_state_dict(best["weights"], strict=False)
+        model.eval()
+        citems = prepare("calibration")
+        scored = evaluate(model, citems, args.objective)
+        clogits = np.log(np.maximum([r["probabilities"] for r in scored["predictions"]], 1e-12))
+        decision = calibrate(prepared_records["calibration"], clogits, args.output)
+        selected = evaluate(model, validation, args.objective)
+        slogits = np.log(np.maximum([r["probabilities"] for r in selected["predictions"]], 1e-12))
+        result = prediction_rows(prepared_records[selection_name], slogits, decision)
+        save_json({"metrics": breakdown(result), "predictions": result, "evaluation": "Selection fitting data"},
+                  args.output / "selection.json")
+        def predict(bodies):
+            with torch.no_grad():
+                logits = [model(model.windows(body))[0].cpu().numpy() for body in bodies]
+            p = probabilities(logits, decision["temperature"])
+            return p, {key: discard(p, value["threshold"]) for key, value in decision["policies"].items()}
+        measured = speed(predict, prepared_records[selection_name],
+                         torch.cuda.synchronize if args.device == "cuda" else lambda: None)
+        measured.update(peak_vram_bytes=state.get("peak_vram_bytes", 0),
+                        adapter_bytes=(args.output / "best.pt").stat().st_size,
+                        batch_definition="Serial documents; batched windows within each document",
+                        cost_note="Local compute; base weights, electricity and hardware are additional")
+        save_json(measured, args.output / "performance.json")
+        save_json({"config_sha256": fingerprint(args.output / "config.json"),
+                   "artifact_sha256": fingerprint(args.output / "best.pt"),
+                   "decision_sha256": fingerprint(args.output / "decision.json")}, args.output / "complete.json")
     print(f"Selected epoch {state['best_epoch']}; saved {args.output / 'best.pt'}", flush=True)
 
 
@@ -323,11 +394,15 @@ if __name__ == "__main__":
     parser.add_argument("--device", choices=("cpu", "cuda"), default="cuda")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument(
-        "--selection", choices=("raw", "tuned"), default="tuned", help="Validation macro F1 used to choose checkpoints"
+        "--selection", choices=("raw", "tuned"), help="Macro F1 used to choose checkpoints; research defaults raw"
     )
     parser.add_argument("--learning-rate", type=float, default=LEARNING_RATE)
     parser.add_argument("--encoder-learning-rate", type=float)
-    parser.add_argument("--model", choices=("laya", "finbert", "bge"), default="laya")
+    parser.add_argument("--model", choices=("laya", "finbert", "bge", "modernbert"), default="laya")
+    parser.add_argument("--samples", type=int, help="Frozen nested research training subset")
+    parser.add_argument("--objective", choices=("ce", "brier"), default="ce")
+    parser.add_argument("--context", type=int, choices=(512, 1024, 2048, 4096))
+    parser.add_argument("--window-batch", type=int, default=8)
     parser.add_argument("--adaptation", choices=("head", "lora"), default="head")
     parser.add_argument("--class-weight-power", type=float, choices=(0.0, 0.5, 1.0), default=0.0)
     parser.add_argument("--lora-rank", type=int, default=0, help="Rank of LoRA updates (requires --adaptation lora)")
@@ -344,4 +419,13 @@ if __name__ == "__main__":
         parser.error("LoRA adaptation requires a positive --lora-rank")
     if args.adaptation == "head" and args.lora_rank:
         parser.error("Head adaptation does not use --lora-rank; select --adaptation lora")
-    run(args)
+    if args.window_batch < 1:
+        parser.error("Window batch must be positive")
+    if args.device == "cuda":
+        from filelock import FileLock
+        lock = HERE / "data/research/gpu-job.lock"
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        with FileLock(lock):
+            run(args)
+    else:
+        run(args)
