@@ -1,6 +1,6 @@
 """Build a source-backed Markdown/PDF research report from verified frozen test artifacts."""
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from importlib.metadata import version
 import json
 from pathlib import Path
@@ -11,8 +11,9 @@ from xml.sax.saxutils import escape
 import numpy as np
 
 from evaluate_study import bootstrap, validate_freeze
+from prepare import family
 from protocol import breakdown, fingerprint
-from schemas import HERE, LABELS, body_hash, load_split, read_records, save
+from schemas import HERE, LABELS, annotation, body_hash, load_split, read_records, save
 
 
 def number(value, digits=3):
@@ -92,6 +93,38 @@ def corpus_tables(prepared):
                         [[name, counts["available"], counts["chosen"]] for name, counts in prepared["partitions"].items()]),
                   "Selection applies the recorded split ceilings and train/validation/test 8-K share cap; these counts are distinct "
                   "from labeled support below."]
+    return parts
+
+
+def training_composition(splits):
+    manifest = json.loads((splits / "manifest.json").read_text(encoding="utf-8"))
+    digest = fingerprint(splits / "subsets.json")
+    if digest != manifest["subsets_sha256"]:
+        raise ValueError("Frozen training subsets changed")
+    rows = load_split(splits, "train")
+    by_hash = {body_hash(row): row for row in rows}
+    subsets = json.loads((splits / "subsets.json").read_text(encoding="utf-8"))["subsets"]
+    counts, previous = {}, []
+    for size in sorted(subsets, key=int):
+        identities = subsets[size]
+        if len(identities) != int(size) or len(set(identities)) != int(size) or identities[:len(previous)] != previous:
+            raise ValueError("Training composition requires distinct, nested frozen subsets")
+        selected = [by_hash[key] for key in identities]
+        counts[size] = {"documents": len(selected), "groups": len({row.get("group_id", body_hash(row)) for row in selected}),
+                        "labels": dict(Counter(annotation(row)["label"] for row in selected)),
+                        "families": dict(Counter(family(row) for row in selected)),
+                        "providers": dict(Counter(row.get("source", "sec") for row in selected))}
+        previous = identities
+    return {"train_sha256": manifest["splits"]["train"]["sha256"], "subsets_sha256": digest, "subsets": counts}
+
+
+def training_tables(composition):
+    counts = composition["subsets"]
+    parts = [table(["Training documents", "Independent groups", *LABELS],
+                   [[size, value["groups"], *[value["labels"].get(name, 0) for name in LABELS]] for size, value in counts.items()])]
+    for kind, title in (("families", "Family"), ("providers", "Provider")):
+        names = sorted({name for value in counts.values() for name in value[kind]})
+        parts.append(table([title, *counts], [[name, *[value[kind].get(name, 0) for value in counts.values()]] for name in names]))
     return parts
 
 
@@ -270,10 +303,12 @@ def build(splits, study, human=None):
     records = load_split(splits, "test")
     audit = human_audit(human, records, predictions, freeze["primary_linear"])
     quote = reference_quote(records)
+    composition = training_composition(splits)
     output = study / "report"
     output.mkdir(exist_ok=True)
     save(audit, output / "human-audit.json")
     save(quote, output / "reference-quote.json")
+    save(composition, output / "training-composition.json")
     intervals = json.loads((study / "bootstrap.json").read_text())["models"]
     main = {}
     for name, entry in entries.items():
@@ -406,6 +441,9 @@ def build(splits, study, human=None):
               "the allocation must be considered when interpreting sample efficiency. One training seed is used. "
               "Recipes are screened at 1000/4000 or nearest attainable sizes. Their tuning labels "
               "are additional, so the smallest point is not a claim that its training rows alone suffice to discover the recipe.",
+              *training_tables(composition),
+              "Counts use the exact frozen training subsets shared by all models. Independent groups may contain multiple "
+              "related documents. These tables describe training allocation; recipe-screening and validation labels are additional.",
               "![Context ablations retain the same whole documents](context.png)",
               "Laya uses fixed uniform whole-document pooling and 50% overlapping windows; the native SDK reference uses "
               "most-confident-window aggregation. CE/Brier objectives are document-level; no chunk labels are invented. "
@@ -524,6 +562,6 @@ def build(splits, study, human=None):
           "report_source_sha256": fingerprint(HERE / "report.py"),
           "versions": {n: version(n) for n in ('matplotlib', 'reportlab', 'pypdf')},
           "outputs": {name: fingerprint(output / name) for name in
-                      ('report.md', 'report.pdf', 'human-audit.json', 'reference-quote.json',
+                      ('report.md', 'report.pdf', 'human-audit.json', 'reference-quote.json', 'training-composition.json',
                        'learning-curves.png', 'context.png', 'throughput.png', 'confusion.png')}}, output / "manifest.json")
     print(f"Report written to {output}; render and inspect PDF before publication", flush=True)
