@@ -387,7 +387,7 @@ def build(splits, study, human=None):
                                [[name, value['successful_teacher_labels'], number(value['teacher_cost_usd'], 4),
                                  value['teacher_cost_unavailable']] for name, value in coverage.items()]) +
                          "\n\nThese costs cover successful teacher annotations retained in the frozen benchmark, "
-                         "using recorded API usage and prices. Missing costs are counted separately. The shared $3 project ledger "
+                         "using recorded API usage and prices. Missing costs are counted separately. The shared $5 project ledger "
                          "also covers pilots, failed or unresolved requests and labels excluded from the benchmark; "
                          "these retained-label totals are not the entire project bill. Human-review time is excluded.")
     policy_rows = []
@@ -402,7 +402,9 @@ def build(splits, study, human=None):
               "", "## Adaptation, sample efficiency and context", "",
               "![Nested learning curves on the same held-out cohort](learning-curves.png)",
               "Training sizes are nested 250/1000/4000/16000/all where attainable. Each neural run restarts from pinned pretrained "
-              "weights; one training seed is used. Recipes are screened at 1000/4000 or nearest attainable sizes. Their tuning labels "
+              "weights. Deterministic family/label round-robin sampling changes class/source proportions as strata exhaust; "
+              "the allocation must be considered when interpreting sample efficiency. One training seed is used. "
+              "Recipes are screened at 1000/4000 or nearest attainable sizes. Their tuning labels "
               "are additional, so the smallest point is not a claim that its training rows alone suffice to discover the recipe.",
               "![Context ablations retain the same whole documents](context.png)",
               "Laya uses fixed uniform whole-document pooling and 50% overlapping windows; the native SDK reference uses "

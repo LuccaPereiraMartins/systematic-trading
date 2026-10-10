@@ -13,7 +13,7 @@ import sys
 from filelock import FileLock
 import psutil
 
-from label import Budget, LEDGER, MAX_OUTPUT, MODEL, RATES, RUBRIC_HASH, reservation
+from label import AUTHORIZED_CEILING_USD, Budget, LEDGER, MAX_OUTPUT, MODEL, RATES, RUBRIC_HASH, reservation
 from prepare import family
 from schemas import HERE, annotation, body_hash, file_hash, read_records, save
 
@@ -139,7 +139,7 @@ def run(args):
 
     sources = source_hashes()
     plan = {"corpora": list(map(str, corpora)), "legacy": str(args.legacy), "legacy_events": str(args.legacy_events), "splits": str(args.splits),
-            "study": str(args.study), "source_sha256": sources, "label_ceiling_usd": 3.0, "ledger": str(LEDGER)}
+            "study": str(args.study), "source_sha256": sources, "label_ceiling_usd": AUTHORIZED_CEILING_USD, "ledger": str(LEDGER)}
     plan_path = output / "plan.json"
     def unchanged():
         if source_hashes() != sources:
@@ -182,12 +182,14 @@ def run(args):
                 save(quote(args.splits), output / "label-quote.json")
                 for name in ("validation", "test", "train"):
                     path = args.splits / f"{name}-input.jsonl"
-                    command(f"label-{name}", "label.py", ["--dataset", path, "--ledger", LEDGER, "--budget-usd", 3])
+                    command(f"label-{name}", "label.py", ["--dataset", path, "--ledger", LEDGER,
+                                                       "--budget-usd", AUTHORIZED_CEILING_USD])
                     missing = [row for row in read_records(path) if annotation(row)["label"] is None]
                     if any(row.get("label_error") for row in missing):
                         raise ValueError(f"Resolve failed {name} requests before freezing; reservations remain in the shared ledger")
                     if name != "train" and missing:
-                        raise ValueError(f"Complete selected {name} labels before freezing; shared $3 cap remains in force")
+                        raise ValueError(f"Complete selected {name} labels before freezing; "
+                                         f"shared ${AUTHORIZED_CEILING_USD:g} cap remains in force")
                 command("data-freeze", "prepare.py", ["--output", args.splits, "--freeze"])
             review = output / "review"
             if not (review / "mapping.json").exists():

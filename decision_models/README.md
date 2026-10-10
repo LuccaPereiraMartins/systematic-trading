@@ -336,7 +336,7 @@ legacy event registry with `legacy_events.py`; its default path can be changed w
 The workflow checks completed source dates, identities, language filters and retained response hashes,
 then prepares the mixed corpus with verified old-event links. Registry and submission-cache hashes are
 required inputs, and incomplete old-body coverage stops the workflow before labeling.
-It saves an offline label quote and labels validation, test, then training with the same $3 Luna Flex ledger.
+It saves an offline label quote and labels validation, test, then training with the same $5 Luna Flex ledger.
 Failed requests or incomplete evaluation labels stop it; budget-limited training remains explicit in the
 frozen manifest. It then creates blinded review forms and runs `fit`, `freeze`, `test` serially. Its plan,
 stage logs and status live under the study's `workflow` folder. Resume with the same command and paths;
@@ -378,7 +378,7 @@ python decision_models/study.py --splits decision_models/data/research/benchmark
 
 Fresh preparation preserves old annotations for audit but requeues teacher labels from another rubric.
 The frozen manifest also binds nested subset IDs. The original archive is unchanged. All new labels still
-share the $3 Luna Flex ledger; runner/test/report code does not dispatch paid API calls.
+share the $5 Luna Flex ledger; runner/test/report code does not dispatch paid API calls.
 The [research context](literature.md) identifies primary model/method sources and distinguishes sentiment,
 embedding, typed-decision and triage tasks. Published scores on other tasks are not results of this study.
 
