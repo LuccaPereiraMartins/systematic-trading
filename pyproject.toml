@@ -23,6 +23,7 @@ models = [
     "langid>=1.1.6",
     "tiktoken>=0.14.0",
     "filelock>=4.0.10",
+    "scipy",
 ]
 encoders = [
     "torch==2.14.0",

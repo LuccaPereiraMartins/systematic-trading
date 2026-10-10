@@ -214,3 +214,37 @@ Primary 8-Ks are capped at 40% of train, validation and test, both before labeli
 Labels removed to preserve this share remain in their input queues, with excluded/retained counts in the manifest.
 Human-review forms hide model labels; conflicting double reviews stay unresolved. The review audit is not an
 expert assessment of investment usefulness.
+
+## Fresh-study baseline fitting
+
+After the new splits are labeled and frozen, use the research fitter. It reads train, selection and
+calibration only; the legacy benchmark refuses to open the new test set before the final study freeze.
+
+```bash
+python decision_models/fit_baselines.py --model combined --classifier svm --samples 1000 --splits decision_models/data/research/benchmark --output decision_models/training_runs/research/combined-svm-1000
+python decision_models/fit_baselines.py --model finbert --samples 1000 --splits decision_models/data/research/benchmark --output decision_models/training_runs/research/finbert-frozen-1000
+```
+
+The research grid compares majority, word, character and combined TF-IDF with logistic regression/linear SVM,
+plus frozen FinBERT/BGE logistic classifiers. C is .001/.01/.1/1/10/30/100, with unweighted and balanced variants.
+Vocabulary/scaling fits each training subset alone. Selection uses raw macro F1 and excludes unconverged
+candidates. One temperature fits log loss on separate calibration groups; no further decision-offset search
+is used in the fresh study. This keeps model selection separate from the probability/policy fit.
+
+Discard policies maximize the calibration workload reduction subject to empirical 1% or 5% review-worthy
+miss rates. Predicted unclear/review-worthy documents always route to review. These are empirical targets;
+sparse calibration support cannot establish a population guarantee. The report will show achieved test rates.
+Multiclass Brier is the sum over three classes (range 0–2); ECE uses ten equal-width confidence bins. Metrics
+include dangerous miss counts/rates, unclear discards, discard contamination and family/class support.
+
+Runs save the grid, fitted artifact, calibration/policy choices, source snapshot, versions, inference timings
+and fingerprints. Warm single-document latency includes text processing; native sklearn batches of 1/8 and
+serial encoder document batches are identified separately. Frozen encoder timings include all context windows.
+Frozen features are cached by raw body and pinned encoder recipe, independently of labels and subset size.
+Vector checksums and source/runtime fingerprints guard reuse; interrupted writes keep committed features.
+Per-document computation time and allocated VRAM are retained separately from a later fit's cache-loading
+time, so preparation costs remain visible when nested curves reuse the same features. These are frozen,
+corpus-independent encodings; vocabulary/scaling and classifiers still fit each training subset alone.
+GPU jobs share a lock. `--resume` rejects changed inputs/settings or completed artifacts. Full learning curves
+and final test comparisons remain pending the corpus freeze. Paid OpenAI benchmark execution is disabled;
+only the bounded Luna corpus-labeling entry point may spend credits.

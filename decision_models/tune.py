@@ -1,9 +1,11 @@
 """Fit simple baselines on train; choose regularization, weights and decision offsets on validation."""
 
 import argparse
+from contextlib import closing
 import hashlib
 import itertools
 import json
+import sqlite3
 import time
 from importlib.metadata import version
 from pathlib import Path
@@ -15,7 +17,7 @@ from threadpoolctl import threadpool_limits
 
 from baselines import FITTED_MODELS, make
 from benchmark import Benchmark
-from schemas import LABELS, annotation, load_split, replace_file, save
+from schemas import LABELS, annotation, body_hash, load_split, save
 
 
 HERE = Path(__file__).resolve().parent
@@ -132,7 +134,7 @@ def blend(directories, output, splits):
     tune_offsets(output, splits)
 
 
-def embeddings(kind, records, split, device):
+def embeddings(kind, records, split, device, details=None):
     import torch
     from encoders import EncoderModel, MODELS
 
@@ -140,8 +142,8 @@ def embeddings(kind, records, split, device):
     fingerprint = hashlib.sha256(
         json.dumps(
             {
-                "bodies": [row["body"] for row in records],
                 "model": MODELS[kind],
+                "cache_format": "document-f32-v1",
                 "raw": True,
                 "window": 510,
                 "pooling": "mean of all windows, then L2",
@@ -151,24 +153,64 @@ def embeddings(kind, records, split, device):
             }
         ).encode()
     ).hexdigest()
-    cache = HERE / "data/cache" / f"{kind}-{split}-{fingerprint[:12]}.npz"
+    cache = HERE / "data/cache" / f"{kind}-documents-{fingerprint[:12]}.sqlite"
     cache.parent.mkdir(parents=True, exist_ok=True)
-    vectors = []
-    if cache.exists():
-        with np.load(cache) as saved:
-            if str(saved["fingerprint"]) != fingerprint:
-                raise ValueError(f"Embedding cache differs: {cache}")
-            vectors = list(saved["vectors"])
-    if len(vectors) < len(records):
-        model = EncoderModel(device, kind=kind).eval()
-        with torch.no_grad():
-            for i in range(len(vectors), len(records)):
-                vectors.append(model.embed(records[i]["body"]).cpu().numpy())
-                if len(vectors) % 250 == 0 or len(vectors) == len(records):
-                    temporary = cache.with_suffix(".tmp.npz")
-                    np.savez_compressed(temporary, vectors=np.array(vectors), fingerprint=fingerprint)
-                    replace_file(temporary, cache)
-                    print(f"{kind} {split}: {len(vectors)}/{len(records)}", flush=True)
+    vectors, model = [], None
+    stats = {"documents": len(records), "computed": 0, "reused": 0, "recorded_compute_seconds": 0.0,
+             "peak_vram_bytes": 0, "model_loading_seconds": 0.0, "cache_fingerprint": fingerprint}
+    started = time.perf_counter()
+    with closing(sqlite3.connect(cache, timeout=30)) as db, db:
+        db.execute("CREATE TABLE IF NOT EXISTS recipe (fingerprint TEXT PRIMARY KEY, width INTEGER)")
+        db.execute("CREATE TABLE IF NOT EXISTS features (body TEXT PRIMARY KEY, vector BLOB, sha TEXT, seconds REAL, vram INTEGER)")
+        recipe = db.execute("SELECT fingerprint,width FROM recipe").fetchall()
+        if recipe and (len(recipe) != 1 or recipe[0][0] != fingerprint):
+            raise ValueError(f"Embedding cache differs: {cache}")
+        width = recipe[0][1] if recipe else None
+        for row in records:
+            digest = body_hash(row)
+            saved = db.execute("SELECT vector,sha,seconds,vram FROM features WHERE body=?", (digest,)).fetchone()
+            if saved:
+                blob, checksum, seconds, vram = saved
+                if hashlib.sha256(blob).hexdigest() != checksum:
+                    raise ValueError(f"Cached feature checksum differs: {digest}")
+                vector = np.frombuffer(blob, dtype="<f4").copy()
+                stats["reused"] += 1
+            else:
+                if model is None:
+                    loading = time.perf_counter()
+                    model = EncoderModel(device, kind=kind).eval()
+                    if device == "cuda":
+                        torch.cuda.synchronize()
+                    stats["model_loading_seconds"] = time.perf_counter() - loading
+                    if width is not None and width != model.encoder.config.hidden_size:
+                        raise ValueError("Cached feature width differs from the pinned encoder")
+                    width = model.encoder.config.hidden_size
+                    db.execute("INSERT OR IGNORE INTO recipe VALUES (?,?)", (fingerprint, width))
+                if device == "cuda":
+                    torch.cuda.synchronize()
+                    torch.cuda.reset_peak_memory_stats()
+                computing = time.perf_counter()
+                with torch.no_grad():
+                    vector = model.embed(row["body"]).cpu().numpy().astype("<f4")
+                seconds = time.perf_counter() - computing
+                vram = torch.cuda.max_memory_allocated() if device == "cuda" else 0
+                blob = vector.tobytes()
+                if vector.ndim != 1 or vector.size != width or not np.isfinite(vector).all():
+                    raise ValueError("Invalid encoder feature")
+                db.execute("INSERT INTO features VALUES (?,?,?,?,?)",
+                           (digest, blob, hashlib.sha256(blob).hexdigest(), seconds, vram))
+                stats["computed"] += 1
+                if stats["computed"] % 250 == 0:
+                    db.commit()
+                    print(f"{kind} {split}: {len(vectors) + 1}/{len(records)}; {stats['computed']} new features", flush=True)
+            if vector.size != width or not np.isfinite(vector).all() or seconds < 0 or vram < 0:
+                raise ValueError("Invalid cached encoder feature")
+            vectors.append(vector)
+            stats["recorded_compute_seconds"] += seconds
+            stats["peak_vram_bytes"] = max(stats["peak_vram_bytes"], vram)
+    stats["preparation_seconds"] = time.perf_counter() - started
+    if details is not None:
+        details.update(stats)
     return np.array(vectors)
 
 

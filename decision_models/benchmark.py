@@ -9,14 +9,12 @@ import time
 import warnings
 from pathlib import Path
 
-from label import RUBRIC
 from schemas import (
     LABELS,
     LAYA_MODEL,
     LAYA_REVISION,
     LAYA_QUESTIONS,
     SPLITS,
-    LabelOutput,
     annotation,
     body_hash,
     load_split,
@@ -37,6 +35,8 @@ class SavedModel:
         torch.set_num_threads(4)
         self.directory = directory
         self.config = json.loads((directory / "config.json").read_text(encoding="utf-8"))
+        if self.config.get("family", "").startswith("research_"):
+            raise ValueError("Research runs require the study evaluator and final selection freeze")
         if self.config["labels"] != list(Benchmark.labels):
             raise ValueError("Saved model label order differs from benchmark")
         decision = directory / "decision.json"
@@ -119,6 +119,8 @@ class Benchmark:
     def __init__(self, device=None, splits=SPLITS):
         self.device = device
         self.split_manifest = json.loads((splits / "manifest.json").read_text(encoding="utf-8"))
+        if "prepared" in self.split_manifest:
+            raise ValueError("Fresh research test inference requires the study's final selection freeze")
         self.sample = load_split(splits, "test")
 
     body_hash = staticmethod(body_hash)
@@ -250,66 +252,9 @@ class Benchmark:
         return self.finish()
 
     async def run_openai(self, model):
-        from dotenv import load_dotenv
-        from openai import AsyncOpenAI
-
-        load_dotenv(HERE.parent / ".env")
-        self.start(
-            model,
-            model=model,
-            service_tier=self.service_tier,
-            reasoning_effort=self.reasoning_effort,
-            pricing_usd_per_million_tokens=self.rates[model],
-            cost_note="Estimate for this run from API token usage and short-context Flex rates; verify against account billing.",
-            tokens={"input": 0, "cached_input": 0, "output": 0},
+        raise PermissionError(
+            "Paid benchmarking is not currently authorised. Only Luna Flex corpus labeling may spend credits."
         )
-        semaphore = asyncio.Semaphore(self.concurrency)
-        client = AsyncOpenAI(timeout=900.0, max_retries=8)
-
-        async def predict(record):
-            async with semaphore:
-                before = time.perf_counter()
-                response = await client.responses.parse(
-                    model=model,
-                    service_tier=self.service_tier,
-                    reasoning={"effort": self.reasoning_effort},
-                    instructions=RUBRIC,
-                    input=record["body"],
-                    text_format=LabelOutput,
-                    max_output_tokens=1024,
-                )
-                latency = time.perf_counter() - before
-                if response.status != "completed" or any(
-                    item.type == "refusal" for output in response.output for item in getattr(output, "content", [])
-                ):
-                    raise ValueError(f"{model} did not return a label: {response.status}")
-                answer = response.output_parsed
-                if answer is None or answer.label not in self.labels:
-                    raise ValueError(f"{model} returned an invalid structured label")
-                usage = response.usage
-                cached = getattr(usage.input_tokens_details, "cached_tokens", 0) or 0
-                tokens = {"input": usage.input_tokens, "cached_input": cached, "output": usage.output_tokens}
-                for key, value in tokens.items():
-                    self.result["tokens"][key] += value
-                rates = self.rates[model]
-                self.result["estimated_cost_per_run_usd"] += (
-                    (tokens["input"] - cached) * rates["input"]
-                    + cached * rates["cached_input"]
-                    + tokens["output"] * rates["output"]
-                ) / 1_000_000
-                self.record(record, answer.label, latency, uncertainty=answer.uncertainty)
-
-        tasks = [asyncio.create_task(predict(record)) for record in self.sample]
-        try:
-            await asyncio.gather(*tasks)
-        except BaseException:
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            raise
-        finally:
-            await client.close()
-        return self.finish()
 
     def run_saved(self, directory):
         import numpy as np
