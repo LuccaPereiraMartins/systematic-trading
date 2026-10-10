@@ -151,7 +151,7 @@ python decision_models/collect_sources.py --family fed --number 50 --output deci
 python decision_models/legacy_events.py
 # Prepare independently collected inputs; legacy rows are allowed in training only.
 python decision_models/prepare.py --corpora decision_models/data/research/corpus/fed.jsonl decision_models/data/research/corpus/6k.jsonl --legacy-events decision_models/data/research/legacy-events/events.json --output decision_models/data/research/benchmark
-# Label validation/test first, then training, all against ONE shared $3 ceiling.
+# Label validation/test first, then training, all against ONE shared $5 ceiling.
 python decision_models/label.py --dataset decision_models/data/research/benchmark/validation-input.jsonl
 python decision_models/label.py --dataset decision_models/data/research/benchmark/test-input.jsonl
 python decision_models/label.py --dataset decision_models/data/research/benchmark/train-input.jsonl
