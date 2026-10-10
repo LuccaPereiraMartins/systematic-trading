@@ -490,7 +490,8 @@ def build(splits, study, human=None):
                     key=lambda r: r['probabilities'][0], reverse=True)[:8]
     for r in misses:
         source = by_hash[r['body_sha256']]
-        excerpt = re.sub(r"\s+", " ", source['body'])[:450]
+        words = re.sub(r"\s+", " ", source['body']).split()
+        excerpt = " ".join(words[:25]) + (" ..." if len(words) > 25 else "")
         parts += [f"Routine probability {r['probabilities'][0]:.3f}; {r['date']}; {r['family']}; "
                   f"[source]({source.get('url', '')}). Teacher label: review_worthy. Body hash: {r['body_sha256']}.", excerpt]
     if not misses:
