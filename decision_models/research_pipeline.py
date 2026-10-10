@@ -107,7 +107,8 @@ def audit(corpora, legacy):
 def quote(splits):
     result = {"model": MODEL, "service_tier": "flex", "rubric_sha256": RUBRIC_HASH,
               "rates_usd_per_million": RATES, "output_tokens_max": MAX_OUTPUT, "queues": {},
-              "note": "Offline token approximation plus 128 request tokens; byte-bound reservations settle to actual usage"}
+              "cache_mode": "explicit",
+              "note": "Approximation assumes no cache writes/reuse; byte-bound reservations cover cache-write pricing and settle to usage"}
     budget = Budget(LEDGER)
     try:
         result["project_charged_or_reserved_usd"] = budget.total()

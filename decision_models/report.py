@@ -104,16 +104,16 @@ def reference_quote(records):
     bound = [len((RUBRIC + r["body"]).encode("utf-8")) + 2048 for r in records]
     scenarios = {}
     for output in (128, 1024):
-        scenarios[str(output)] = {"approximate_usd": sum(n / 1e6 * (2 if n > 272000 else 1) +
+        scenarios[str(output)] = {"approximate_usd": sum(n / 1e6 * 1.25 * (2 if n > 272000 else 1) +
                                                          output / 1e6 * 5 * (1.5 if n > 272000 else 1) for n in estimated),
-                                 "conservative_usd": sum(n / 1e6 * (2 if n > 272000 else 1) +
+                                 "conservative_usd": sum(n / 1e6 * 1.25 * (2 if n > 272000 else 1) +
                                                          output / 1e6 * 5 * (1.5 if n > 272000 else 1) for n in bound)}
     return {"model": "gpt-6.1-sol", "tier": "flex", "executed": False, "documents": len(records),
-            "rates_usd_per_million": {"input": 1.0, "cached_input": .05, "output": 5.0},
-            "pricing_checked": "2026-10-09", "pricing_source": "https://developers.openai.com/api/docs/pricing/",
+            "rates_usd_per_million": {"input": 1.0, "cached_input": .05, "cache_write": 1.25, "output": 5.0},
+            "pricing_checked": "2026-10-10", "pricing_source": "https://developers.openai.com/api/docs/pricing/",
             "tokenizer": "o200k_base approximation; UTF-8 byte upper bound plus 2048 prompt/schema overhead",
             "scenarios_output_tokens_per_document": scenarios,
-            "limits": "No cache discounts. Above 272k input, 2x input/1.5x output. Reasoning counts as output; not a service guarantee."}
+            "limits": "Assumes all input written to cache, no reuse discounts. Above 272k input, 2x input/1.5x output. Reasoning counts as output; not a service guarantee."}
 
 
 def cached_weights(config):

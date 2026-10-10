@@ -22,6 +22,7 @@ Approved scope: source-content-only triage for analyst inboxes, written for AI/M
 - Nested training subsets: 250, 1000, 4000, 16000 and all available. Start each neural run from its original pretrained checkpoint.
 - GPU jobs run serially on the local RTX 3060 12 GB. Preserve checkpoints, source fingerprints and failed configurations. Local API cost is not the same as zero compute cost.
 - Only Luna Flex labeling is currently authorised for paid execution: a shared **$3 maximum**, preserving at least $4 of the stated $7 credits. Keep future relabeling possible. Cloud and paid reference benchmarks need concrete quotes before execution.
+- Luna cost accounting includes ordinary input, cache reads, cache writes and output, including long-context premiums. One-use labeling requests use explicit caching without breakpoints; byte-bound reservations still cover cache-write charges. Rates and usage travel with each new annotation. The paid-reference quote assumes all input incurs cache-write pricing.
 - Supervised head/LoRA objectives are core. RL/RLCD is a possible follow-on after these five PRs.
 - Human review: 12 rubric examples, 72 fresh test documents, 12 overlapping second reviews; three hours total. Prepare now, review later. Unresolved disagreements stay unresolved. Independent quality claims wait for review.
 
