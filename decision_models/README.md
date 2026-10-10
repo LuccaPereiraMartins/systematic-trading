@@ -282,3 +282,33 @@ documents and fixed pooling. Encoder positional capacity is checked; FinBERT/BGE
 Unsupported/OOM configurations and any smaller window-batch fallback belong in the experiment manifest; failed
 settings are not evidence that longer context lacks value. Structural Laya checks passed at all four contexts;
 quality ablations and sample-efficiency findings await the corpus freeze.
+
+## Language-model research runs
+
+```bash
+python decision_models/train.py --model finbert --adaptation head --samples 1000 --epochs 3 --splits decision_models/data/research/benchmark --output decision_models/training_runs/research/finbert-head-1000
+python decision_models/decision_base.py --model qwen17 --splits decision_models/data/research/benchmark --output decision_models/training_runs/research/qwen17-prompt
+python decision_models/train.py --model qwen17 --adaptation lora --lora-rank 8 --samples 1000 --context 4096 --learning-rate .0001 --epochs 3 --splits decision_models/data/research/benchmark --output decision_models/training_runs/research/qwen17-qlora-1000
+```
+
+FinBERT/BGE head and rank-8 LoRA adaptation reuse the document-level encoder loop. The causal alternatives
+are [Qwen3-1.7B](https://huggingface.co/Qwen/Qwen3-1.7B) and
+[Qwen3-4B](https://huggingface.co/Qwen/Qwen3-4B), pinned to `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e` and
+`1cfa9a7208912126459214e8b04321603b3df60c` respectively (Apache 2.0). Both use non-thinking chat prompts,
+NF4 double quantization and BF16 compute. This is the local quantized reference, not an unquantized SOTA claim.
+The shared source-only rubric maps A/B/C to routine/review-worthy/unclear. Scores are conditional probabilities
+over these three next-token choices; the full-vocabulary A/B/C probability mass is recorded separately.
+
+The fixed 4096-token budget includes instructions and chat formatting. Longer source bodies retain their
+first and last tokens; the middle is omitted. Coverage records include original and retained token counts.
+Final comparisons must show both the full cohort and the same fully covered subset for every model. Encoder
+and Laya windows retain whole-document coverage; they do not inherit Qwen's clipping. Prompt text, token IDs,
+model revision and quantization are saved for reproducibility.
+
+QLoRA trains only rank-8 query/value adapters (alpha 16, dropout .05). Its loss is discriminative cross-entropy
+conditional on A/B/C, rather than conventional full-vocabulary generative SFT. Learning rates .00005/.0001
+are screened on 1000 documents using validation only; the selected recipe starts afresh for each nested
+subset. Qwen3-1.7B has the full attainable learning curve; Qwen3-4B adaptation is bounded to 4000 documents.
+K-bit training preparation can change frozen layer precision, so the matched epoch-zero adapter model is the
+correct baseline for adaptation gains. The separate prompt-only reference remains useful as a deployed setup.
+No paid LLM reference is executed; its proposed cost will be quoted before any future authorization.

@@ -31,6 +31,7 @@ encoders = [
     "numpy",
 ]
 laya = [
+    "bitsandbytes>=0.50.2",
     "laya==0.3.21",
     "peft==0.21.2",
     "torch==2.14.0",
