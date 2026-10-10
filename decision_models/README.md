@@ -136,4 +136,81 @@ python decision_models/benchmark.py --saved decision_models/training_runs/blend-
 
 Retired length/keyword and cleaned/capped variants remain in that log and Git history. Their custom-transformer joblibs require the original source version; they are not supported by the active pipeline. Existing pure sklearn artifacts and neural checkpoints remain loadable. Source changes require `--refit` when using `evaluate.py`.
 
-Next work: stronger labels, issuer/temporal splits and baseline robustness before further post-training or RL. Performance on news or transcripts has not yet been evaluated.
+These historical runs are exploratory. The expanded study below adds fresh labels, temporal evaluation and
+source coverage before further adaptation. Performance on news has not yet been established.
+
+## Expanded research corpus
+
+The [approved research programme](research.md) defines five dependent PRs. New inputs and outputs live under
+`data/research/`; the original 10,000-row archive and its splits remain unchanged.
+
+```bash
+# Pilot each of 8k / releases / 6k / fed / ecb / news / govuk before scaling its target.
+python decision_models/collect_sources.py --family fed --number 50 --output decision_models/data/research/pilot/fed.jsonl
+# Recover old filing identities from the retained SDK cache before adding release exhibits.
+python decision_models/legacy_events.py
+# Prepare independently collected inputs; legacy rows are allowed in training only.
+python decision_models/prepare.py --corpora decision_models/data/research/corpus/fed.jsonl decision_models/data/research/corpus/6k.jsonl --legacy-events decision_models/data/research/legacy-events/events.json --output decision_models/data/research/benchmark
+# Label validation/test first, then training, all against ONE shared $5 ceiling.
+python decision_models/label.py --dataset decision_models/data/research/benchmark/validation-input.jsonl
+python decision_models/label.py --dataset decision_models/data/research/benchmark/test-input.jsonl
+python decision_models/label.py --dataset decision_models/data/research/benchmark/train-input.jsonl
+python decision_models/prepare.py --output decision_models/data/research/benchmark --freeze
+python decision_models/review.py --splits decision_models/data/research/benchmark --output decision_models/data/research/review
+```
+
+Collection retains original responses in a SQLite cache, extraction hashes, source URLs, publication-date
+precision and reuse attribution. Early pilots used equivalent raw-byte/metadata files, also readable by the
+cache loader. SEC collection processes share one OS lock. SDK metadata requests are capped at four/second;
+direct text requests have a separate 0.26-second interval, leaving their combined limit below ten/second.
+JSONL writes are resumable; failed requests remain retryable, permanent extraction/rights exclusions are logged.
+Changing dates or family requires a new output. Monthly sampling uses stable hash ordering, including month
+order, so small pilots do not always cover only the oldest months. Volume shortfalls are reported.
+
+Sources use institutional public text: [SEC reuse policy](https://www.sec.gov/files/about/webmaster-faq.htm),
+[Fed public-domain policy](https://www.federalreserve.gov/disclaimer.htm), and
+[ECB attribution/accuracy conditions](https://www.ecb.europa.eu/services/using-our-site/disclaimer/html/index.en.html).
+ECB author-named documents are excluded. News collection accepts
+[VOA-original text](https://www.voanews.com/p/5338.html) (agency material excluded) and
+[Wikinews text](https://en.wikinews.org/wiki/Wikinews:Copyright) with its publication-date-specific CC BY license.
+GDELT discovers links; it grants no publisher-content license. Only article text is retained, not image assets.
+Wikinews discovery includes two levels of financial/business subcategories, with deduplicated page identities.
+HM Treasury news uses the GOV.UK Content API under its [reuse policy](https://www.gov.uk/help/reuse-govuk-content).
+Articles revised after their original publication day are excluded. Official announcements and Wikinews share
+the news family, with provider counts and metrics reported separately; journalism coverage remains limited.
+Corporate-release discovery uses SEC full-text matches for press/news releases and distribution-wire markers,
+then retains EX-99 exhibits. Monthly queries are subdivided when the search cap is reached or a server
+error persists after request retries. Single-day failures still reject discovery. This avoids the
+initial description-only pilot's issuer/template bias, but remains a query-defined release cohort.
+
+Luna Flex labeling records response IDs, rubric/model provenance, token usage and charges. Its shared ledger
+reserves a conservative maximum before dispatch. A server error permits at most one separately reserved
+retry per body/rubric, including across restarts; its uncertain original cost remains reserved and the retry
+lineage is recorded. Other interrupted/ambiguous requests block automatic duplicates. Capacity rejections
+release their reservation. SDK automatic retries are disabled, service tier never upgrades, and successful
+ledger responses restore an interrupted dataset and clear its stale error marker.
+Never change `--ledger` to bypass the study-wide ceiling. Remaining user credits are reserved for future rubric
+changes. Independent API benchmarking and cloud compute are outside the currently authorised paid execution.
+
+Preparation excludes old bodies/near duplicates from validation/test and quarantines related groups crossing
+the March/June/September 2026 boundaries. Near-duplicate candidates use 128-permutation MinHash with seed 42;
+candidate search uses a lower .80 threshold; merges require verified five-word-shingle Jaccard similarity of
+at least .90. Candidate retrieval remains approximate and can miss near duplicates. Hash updates are batched
+to bound memory on very large documents. Labeling is followed by an explicit
+freeze; changed frozen outputs are rejected. Selection and calibration sets do not share related groups.
+Primary 8-K HTML is also reconstructed offline with the pinned edgartools text formatter. An exact match
+to an old body joins its group even when extraction differences fall below the shingle threshold; the link
+also reaches related release exhibits through event IDs. The prepared manifest records reconstruction
+version, counts and body/raw hashes. Canonical model inputs remain unchanged; retained raw caches are required.
+The legacy event registry also identifies release-only candidates whose parent 8-K is absent from the new
+sample. Recovery requires an exact old-body hash from the retained SDK submission or its retained primary
+responses; XML/text-extract handling and any complete primary before a truncated trailing attachment are
+recorded explicitly. Preparation independently reconstructs every registered event and requires complete
+old-body coverage, matching archive/SDK versions and unchanged evidence. Preserve `events.json` and
+`submissions.sqlite` with the corpus. Large evidence files are hashed as streams.
+Every selected validation/test document must be labeled before freezing. The manifest records queued,
+labeled and missing training counts, including missing-label families and errors if the budget limits training.
+Primary 8-Ks are capped at 40% of train, validation and test, both before labeling and on retained labels.
+Labels removed to preserve this share remain in their input queues, with excluded/retained counts in the manifest.
+Human-review forms hide model labels; conflicting double reviews stay unresolved. The review audit is not an
+expert assessment of investment usefulness.

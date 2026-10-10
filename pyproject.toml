@@ -18,6 +18,11 @@ models = [
     "openai==3.22.1",
     "requests",
     "edgartools==5.59.1",
+    "beautifulsoup4>=4.15.0",
+    "datasketch>=2.0.0",
+    "langid>=1.1.6",
+    "tiktoken>=0.14.0",
+    "filelock>=4.0.10",
 ]
 encoders = [
     "torch==2.14.0",
