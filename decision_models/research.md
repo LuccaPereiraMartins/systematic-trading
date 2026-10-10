@@ -19,7 +19,7 @@ Approved scope: source-content-only triage for analyst inboxes, written for AI/M
 - Up to 1,200 validation and 1,800 test rows; validation partitions 70% selection/30% calibration and policy fitting. No test inference until all core selections are frozen.
 - Nested training subsets: 250, 1000, 4000, 16000 and all available. Start each neural run from its original pretrained checkpoint.
 - GPU jobs run serially on the local RTX 3060 12 GB. Preserve checkpoints, source fingerprints and failed configurations. Local API cost is not the same as zero compute cost.
-- Only Luna Flex labeling is currently authorised for paid execution: a shared **$3 maximum**, preserving at least $4 of the stated $7 credits. Keep future relabeling possible. Cloud and paid reference benchmarks need concrete quotes before execution.
+- Only Luna Flex labeling is currently authorised for paid execution: a shared **$5 maximum**, preserving at least $2 of the stated $7 credits. Keep future relabeling possible. Cloud and paid reference benchmarks need concrete quotes before execution.
 - Supervised head/LoRA objectives are core. RL/RLCD is a possible follow-on after these five PRs.
 - Human review: 12 rubric examples, 72 fresh test documents, 12 overlapping second reviews; three hours total. Prepare now, review later. Unresolved disagreements stay unresolved. Independent quality claims wait for review.
 
