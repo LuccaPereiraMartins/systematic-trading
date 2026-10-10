@@ -184,9 +184,11 @@ error persists after request retries. Single-day failures still reject discovery
 initial description-only pilot's issuer/template bias, but remains a query-defined release cohort.
 
 Luna Flex labeling records response IDs, rubric/model provenance, token usage and charges. Its shared ledger
-reserves a conservative maximum before dispatch; interrupted or ambiguous requests retain reservations and
-cannot be automatically duplicated. Capacity rejections release their reservation. SDK automatic retries are
-disabled, service tier never upgrades, and successful ledger responses can restore an interrupted dataset.
+reserves a conservative maximum before dispatch. A server error permits at most one separately reserved
+retry per body/rubric, including across restarts; its uncertain original cost remains reserved and the retry
+lineage is recorded. Other interrupted/ambiguous requests block automatic duplicates. Capacity rejections
+release their reservation. SDK automatic retries are disabled, service tier never upgrades, and successful
+ledger responses restore an interrupted dataset and clear its stale error marker.
 Never change `--ledger` to bypass the study-wide ceiling. Remaining user credits are reserved for future rubric
 changes. Independent API benchmarking and cloud compute are outside the currently authorised paid execution.
 
