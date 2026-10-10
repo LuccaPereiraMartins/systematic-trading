@@ -45,6 +45,8 @@ text was available verbatim on its stated publication date. Pretrained-model exp
   Four capacity rejections had zero charge. This verifies dispatch, structured labels and usage accounting;
   it does not validate the annotation rubric. Main labeling uses the shared approved $5 maximum.
 - Shared-budget reservations, interruption recovery, metadata round trips and human-label precedence passed.
+- Offline server-error checks verified one separately reserved retry, its restart bound, retained uncertain
+  charges, zero-charge capacity rejections and refusal to exceed the shared ceiling; no API calls were made.
 - Synthetic event/duplicate groups crossing time boundaries were quarantined; old experiment bodies were
   excluded from fresh validation/test. Frozen splits rejected changed outputs.
 - Offline form/import checks verified blinded assignments, rejected conflicting exports from one reviewer
