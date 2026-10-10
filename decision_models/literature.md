@@ -1,11 +1,16 @@
 # Research context and primary sources
 
-Checked 2026-10-09. This is a source-content-only financial triage study: agreement with review-oriented
+Core references checked 2026-10-09; lexical/scoring references checked 2026-10-10.
+This is a source-content-only financial triage study: agreement with review-oriented
 labels, dangerous review-to-routine errors, adaptation sample efficiency and throughput. It does not assess
 sentiment quality, investment materiality, historical novelty or trading profitability.
 
 ## Why these comparisons
 
+- [Wang and Manning (ACL, 2012)](https://aclanthology.org/P12-2018/) show that lexical classification
+  results depend on features, document length and classifier variant. This motivates our validation-selected
+  lexical comparators, using word/character TF-IDF with logistic regression and SVM. Their sentiment/topic
+  experiments use NB and NB-SVM recipes; our financial-triage results are measured separately.
 - [Laya's pinned model card](https://huggingface.co/convaiinnovations/laya/blob/55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851/README.md)
   describes a ModernBERT-large backbone with learned typed-decision heads and RLCD pretraining. Its financial
   triage behavior remains an empirical question. We use the English root checkpoint, not its router or a
@@ -29,6 +34,11 @@ sentiment quality, investment materiality, historical novelty or trading profita
 
 ## What the methods establish
 
+- [Gneiting and Raftery (JASA, 2007)](https://sites.stat.washington.edu/people/raftery/Research/PDF/Gneiting2007jasa.pdf)
+  describe logarithmic and quadratic scoring rules as strictly proper for categorical forecasts. This motivates
+  our unweighted cross-entropy/Brier comparison. In our weighted variants, label weights change the class
+  distribution targeted by the expected loss. Finite-data fitting and source shift also leave calibration an
+  empirical question; held-out probability and critical-miss measurements remain necessary.
 - [LoRA](https://arxiv.org/abs/2106.09685) motivates low-rank parameter adaptation;
   [QLoRA](https://arxiv.org/abs/2305.14314) motivates NF4 quantized-base adaptation. Our fixed rank,
   objectives, data sizes and hardware are reported separately from the papers' setups and results.
