@@ -11,7 +11,7 @@ import time
 import uuid
 
 from dotenv import load_dotenv
-from openai import AsyncOpenAI, RateLimitError
+from openai import AsyncOpenAI, InternalServerError, RateLimitError
 import tiktoken
 
 from schemas import DATASET, HERE, LabelOutput, annotation, body_hash, read_records, write_records
@@ -61,6 +61,12 @@ class Budget:
             if status in ("reserved", "unknown"):
                 raise ValueError("Unresolved earlier request; reservation retained, automatic duplicate blocked")
         return None
+
+    def permitted_retry_ids(self, digest):
+        return [row[0] for row in self.db.execute(
+            "SELECT id FROM requests WHERE body=? AND rubric=? AND status='unknown_retry_permitted' ORDER BY rowid",
+            (digest, RUBRIC_HASH),
+        )]
 
     def reserve(self, digest, amount):
         self.db.execute("BEGIN IMMEDIATE")
@@ -132,7 +138,7 @@ async def label_dataset(dataset=DATASET, budget_usd=AUTHORIZED_CEILING_USD, ledg
     client = AsyncOpenAI(timeout=900.0, max_retries=0)
     semaphore, pace = asyncio.Semaphore(CONCURRENCY), asyncio.Lock()
     next_request = 0.0
-    outcomes = {"completed": 0, "reused": 0, "budget_skipped": 0, "failed": 0}
+    outcomes = {"completed": 0, "reused": 0, "budget_skipped": 0, "failed": 0, "server_retried": 0}
 
     async def one(i):
         nonlocal next_request
@@ -143,8 +149,10 @@ async def label_dataset(dataset=DATASET, budget_usd=AUTHORIZED_CEILING_USD, ledg
                 previous = budget.previous(digest)
                 if previous is not None:
                     row["llm"] = previous
+                    row.pop("label_error", None)
                     outcomes["reused"] += 1
                     return
+                retry_ids = budget.permitted_retry_ids(digest)
                 tokens, amount = reservation(row["body"])
                 for attempt in range(6):
                     async with pace:
@@ -168,6 +176,19 @@ async def label_dataset(dataset=DATASET, budget_usd=AUTHORIZED_CEILING_USD, ledg
                         if attempt == 5:
                             raise
                         await asyncio.sleep(10 * (attempt + 1))
+                    except InternalServerError as exc:
+                        if retry_ids or attempt == 5:
+                            raise
+                        # Keep the uncertain charge reserved; a single retry gets its own reservation.
+                        budget.finish(key, "unknown_retry_permitted", error=type(exc).__name__,
+                                      status_code=exc.status_code, request_id=getattr(exc, "request_id", None),
+                                      created_utc=datetime.now(timezone.utc).isoformat(),
+                                      recovery={"reason": "One bounded server-error retry within the shared ceiling",
+                                                "original_reservation_retained": True})
+                        retry_ids.append(key)
+                        key = None
+                        outcomes["server_retried"] += 1
+                        await asyncio.sleep(10)
                 usage = response.usage
                 charge = usage_cost(usage) if usage else None
                 details = {"response_id": response.id, "usage": usage.model_dump() if usage else None,
@@ -176,6 +197,8 @@ async def label_dataset(dataset=DATASET, budget_usd=AUTHORIZED_CEILING_USD, ledg
                            "cache_mode": "explicit", "rates_usd_per_million": RATES,
                            "cost_is_upper_bound": usage is None or getattr(usage.input_tokens_details, "cache_write_tokens", None) is None,
                            "estimated_cost_usd": charge}
+                if retry_ids:
+                    details["retry_of"] = retry_ids
                 refusal = any(item.type == "refusal" for output in response.output
                               for item in getattr(output, "content", []))
                 if response.status != "completed" or response.output_parsed is None or refusal:
@@ -186,6 +209,7 @@ async def label_dataset(dataset=DATASET, budget_usd=AUTHORIZED_CEILING_USD, ledg
                 budget.finish(key, "completed", charge, annotation=result, **details)
                 key = None
                 row["llm"] = result
+                row.pop("label_error", None)
                 outcomes["completed"] += 1
             except Exception as exc:
                 if key:
