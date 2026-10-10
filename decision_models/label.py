@@ -17,6 +17,7 @@ import tiktoken
 from schemas import DATASET, HERE, LabelOutput, annotation, body_hash, read_records, write_records
 
 MODEL = "gpt-6-luna"
+AUTHORIZED_CEILING_USD = 5.0
 CONCURRENCY = 4
 TOKENS_PER_MINUTE = 180_000
 MAX_OUTPUT = 1024
@@ -37,9 +38,9 @@ RUBRIC_HASH = hashlib.sha256(RUBRIC.encode()).hexdigest()
 
 class Budget:
     """Reserve before dispatch; interrupted/unknown requests retain their full reservation."""
-    def __init__(self, path=LEDGER, ceiling=3.0):
-        if not 0 < ceiling <= 3:
-            raise ValueError("The authorised Luna ceiling is $3")
+    def __init__(self, path=LEDGER, ceiling=AUTHORIZED_CEILING_USD):
+        if not 0 < ceiling <= AUTHORIZED_CEILING_USD:
+            raise ValueError(f"The authorised Luna ceiling is ${AUTHORIZED_CEILING_USD:g}")
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path, timeout=30)
@@ -118,7 +119,7 @@ async def label_document(client, body):
     return response.output_parsed.model_dump()
 
 
-async def label_dataset(dataset=DATASET, budget_usd=3.0, ledger=LEDGER, limit=None):
+async def label_dataset(dataset=DATASET, budget_usd=AUTHORIZED_CEILING_USD, ledger=LEDGER, limit=None):
     load_dotenv(HERE.parent / ".env")
     records = read_records(dataset)
     pending = [i for i, record in enumerate(records) if annotation(record)["label"] is None]
@@ -211,7 +212,7 @@ async def label_dataset(dataset=DATASET, budget_usd=3.0, ledger=LEDGER, limit=No
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", type=Path, default=DATASET)
-    parser.add_argument("--budget-usd", type=float, default=3.0)
+    parser.add_argument("--budget-usd", type=float, default=AUTHORIZED_CEILING_USD)
     parser.add_argument("--ledger", type=Path, default=LEDGER)
     parser.add_argument("--limit", type=int)
     asyncio.run(label_dataset(**vars(parser.parse_args())))
