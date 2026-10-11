@@ -128,6 +128,34 @@ def training_tables(composition):
     return parts
 
 
+def uncertainty_bands(rows):
+    """Fixed descriptive bands; these do not select a deployment threshold."""
+    uncertainty = np.array([row["uncertainty"] for row in rows], dtype=float)
+    if not np.isfinite(uncertainty).all() or ((uncertainty < 0) | (uncertainty > 1)).any():
+        raise ValueError("Expected finite uncertainty in [0, 1]")
+    bands = []
+    bounds = (0.0, 0.1, 0.2, 0.4, 1.0)
+    for lower, upper in zip(bounds[:-1], bounds[1:]):
+        mask = (uncertainty >= lower) & ((uncertainty <= upper) if upper == 1 else (uncertainty < upper))
+        selected = [row for row, keep in zip(rows, mask, strict=True) if keep]
+        support = sum(row["reference"] == "review_worthy" for row in selected)
+        misses = sum(row["reference"] == "review_worthy" and row["prediction"] == "routine" for row in selected)
+        bands.append({"lower": lower, "upper": upper, "count": len(selected),
+                      "accuracy": sum(row["reference"] == row["prediction"] for row in selected) / len(selected) if selected else None,
+                      "review_worthy_support": support, "dangerous_misses": misses,
+                      "dangerous_miss_rate": misses / support if support else None})
+    return bands
+
+
+def uncertainty_tables(bands, configs, names):
+    return [f"Calibrated uncertainty: {label(configs[name])}.\n\n" +
+            table(["Uncertainty", "Documents", "Accuracy", "Review support", "Misses", "Miss rate"],
+                  [[f"[{row['lower']:.2f}, {row['upper']:.2f}{']' if row['upper'] == 1 else ')'}",
+                    row["count"], number(row["accuracy"]), row["review_worthy_support"],
+                    row["dangerous_misses"], number(row["dangerous_miss_rate"])] for row in bands[name]])
+            for name in names]
+
+
 def reference_quote(records):
     """Local cost scenarios only: no API client, credentials, dispatch or paid benchmark."""
     import tiktoken
@@ -304,11 +332,15 @@ def build(splits, study, human=None):
     audit = human_audit(human, records, predictions, freeze["primary_linear"])
     quote = reference_quote(records)
     composition = training_composition(splits)
+    bands = {name: uncertainty_bands(rows) for name, rows in predictions.items()}
     output = study / "report"
     output.mkdir(exist_ok=True)
     save(audit, output / "human-audit.json")
     save(quote, output / "reference-quote.json")
     save(composition, output / "training-composition.json")
+    save({"definition": "1 minus maximum calibrated class probability",
+          "method": "Fixed descriptive bands; argmax review-to-routine misses divided by review-worthy support within each band",
+          "models": bands}, output / "uncertainty-bands.json")
     intervals = json.loads((study / "bootstrap.json").read_text())["models"]
     main = {}
     for name, entry in entries.items():
@@ -393,6 +425,11 @@ def build(splits, study, human=None):
               "Uncertainty is 1 minus the largest calibrated class probability. It is model confidence, not a probability "
               "of investment materiality; teacher self-reported uncertainty is retained separately. Class support must be read "
               "beside small-slice macro F1. When no misses are observed, bootstrap resampling cannot reveal unseen errors.",
+              *uncertainty_tables(bands, configs, (primary, reference)),
+              "Bands are fixed before testing and descriptive, not selected discard thresholds. Boundary values enter the "
+              "higher band; the final band includes its upper bound. Miss rates divide default review-to-routine misses by "
+              "review-worthy support within each band. Empty bands and bands without review support have undefined rates, "
+              "shown as dashes. Three-class uncertainty cannot exceed 2/3; the final band's upper bound covers all valid values.",
               "", "## Discard policies", ""]
     source_counts = {}
     for split in ("train", "selection", "calibration", "test"):
@@ -562,6 +599,6 @@ def build(splits, study, human=None):
           "report_source_sha256": fingerprint(HERE / "report.py"),
           "versions": {n: version(n) for n in ('matplotlib', 'reportlab', 'pypdf')},
           "outputs": {name: fingerprint(output / name) for name in
-                      ('report.md', 'report.pdf', 'human-audit.json', 'reference-quote.json', 'training-composition.json',
+                      ('report.md', 'report.pdf', 'human-audit.json', 'reference-quote.json', 'training-composition.json', 'uncertainty-bands.json',
                        'learning-curves.png', 'context.png', 'throughput.png', 'confusion.png')}}, output / "manifest.json")
     print(f"Report written to {output}; render and inspect PDF before publication", flush=True)
