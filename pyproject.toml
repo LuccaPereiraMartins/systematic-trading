@@ -23,6 +23,7 @@ models = [
     "langid>=1.1.6",
     "tiktoken>=0.14.0",
     "filelock>=4.0.10",
+    "psutil==7.2.2",
     "scipy",
 ]
 encoders = [
@@ -38,6 +39,11 @@ laya = [
 ]
 dev = [
     "ruff",
+]
+reports = [
+    "matplotlib>=3.11.2",
+    "pypdf>=6.19.0",
+    "reportlab>=5.0.1",
 ]
 
 [tool.uv]

@@ -116,7 +116,7 @@ def metrics(rows):
         bins.append({"lower": index / 10, "upper": (index + 1) / 10, "count": int(mask.sum()),
                      "accuracy": accuracy, "confidence": mean_confidence})
     default_policy = policy_scores(truth, predicted == 0)
-    return {"count": len(rows), "macro_f1": float(f1_score(truth, predicted, labels=[0, 1, 2], average="macro")),
+    return {"count": len(rows), "macro_f1": float(f1_score(truth, predicted, labels=[0, 1, 2], average="macro", zero_division=0)),
             "accuracy": float(accuracy_score(truth, predicted)),
             "per_class": {name: {"precision": float(precision[i]), "recall": float(recall[i]),
                                  "f1": float(f1[i]), "support": int(support[i])} for i, name in enumerate(LABELS)},
@@ -133,6 +133,8 @@ def breakdown(rows):
     return {"overall": metrics(rows),
             "by_family": {key: metrics([r for r in rows if r["family"] == key])
                           for key in sorted({r["family"] for r in rows})},
+            "by_source": {key: metrics([r for r in rows if r["source"] == key])
+                          for key in sorted({r["source"] for r in rows})},
             "by_reference_source": {key: metrics([r for r in rows if r["reference_source"] == key])
                                     for key in sorted({r["reference_source"] for r in rows})}}
 
@@ -155,6 +157,9 @@ def calibrate(records, logits, output):
 
 def training_subset(splits, number):
     rows = load_split(splits, "train")
+    frozen = json.loads((splits / "manifest.json").read_text(encoding="utf-8"))
+    if frozen.get("subsets_sha256") and fingerprint(splits / "subsets.json") != frozen["subsets_sha256"]:
+        raise ValueError("Frozen training subsets changed")
     manifest = json.loads((splits / "subsets.json").read_text(encoding="utf-8"))
     number = len(rows) if number is None else number
     identities = manifest["subsets"].get(str(number))

@@ -1,6 +1,7 @@
 """Fit research baselines on frozen nested training subsets; never load the test split."""
 
 import argparse
+import hashlib
 from importlib.metadata import version
 import itertools
 import json
@@ -18,7 +19,7 @@ from threadpoolctl import threadpool_limits
 
 from baselines import FITTED_MODELS, make
 from protocol import breakdown, calibrate, discard, fingerprint, prediction_rows, probabilities, speed, training_subset
-from schemas import HERE, LABELS, annotation, load_split, replace_file, save
+from schemas import HERE, LABELS, annotation, body_hash, load_split, replace_file, save
 
 
 GRID = (.001, .01, .1, 1, 10, 30, 100)
@@ -67,6 +68,8 @@ def fit(args):
     manifest = json.loads((args.splits / "manifest.json").read_text(encoding="utf-8"))
     config = {"family": "research_linear", "kind": args.model, "classifier": args.classifier,
               "labels": list(LABELS), "seed": 42, "samples": len(train), "split_manifest": manifest,
+              "train_subset_sha256": hashlib.sha256(json.dumps([
+                  (body_hash(r), annotation(r)["label"]) for r in train]).encode()).hexdigest(),
               "regularization": list(args.regularization), "device": args.device,
               "selection": "Macro F1 on selection groups; ties retain first grid candidate",
               "source_sha256": {name: fingerprint(HERE / name) for name in sources},
